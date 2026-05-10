@@ -21,19 +21,38 @@ export type { FlueContextConfig, FlueContextInternal } from './client.ts';
 export { InMemorySessionStore } from './session.ts';
 export { bashFactoryToSessionEnv } from './sandbox.ts';
 
-// Error framework. Re-exported here for the build-plugin templates. Trimmed
-// to only the names the templates actually import — anything thrown
-// transitively by the helpers (e.g. UnsupportedMediaTypeError thrown inside
-// parseJsonBody) is bundled via static imports inside error-utils.ts and
-// doesn't need to appear on this surface. If a future template needs more,
-// add it here at that time.
-export { parseJsonBody, toHttpResponse, toSseData, validateAgentRequest } from './error-utils.ts';
+// Error framework. Re-exported here only for the names that generated
+// server entries import directly. Helpers used purely inside the SDK's own
+// runtime modules (e.g. `parseJsonBody`, `toSseData`, `validateAgentRequest`)
+// are imported from `../error-utils.ts` directly and don't need to appear
+// on this surface. If a future generated entry needs more, add it here.
+//
+// Generated-entry usage:
+//   - Node entry: none (delegates to `createFlueApp`).
+//   - Cloudflare entry: `toHttpResponse` for the worker's outer fetch
+//     try/catch; the four error subclasses for pre-routing checks.
+export { toHttpResponse } from './error-utils.ts';
 export {
 	AgentNotFoundError,
 	InvalidRequestError,
 	MethodNotAllowedError,
 	RouteNotFoundError,
 } from './errors.ts';
+
+// Runtime modules consumed by the generated server entries. The two targets
+// share the per-agent dispatch logic (handle-agent.ts) and the Node target
+// additionally consumes the Hono app builder (flue-middleware.ts). Both are
+// internal — the public surface in Phase 2 will live on `@flue/sdk` root.
+export { handleAgentRequest } from './runtime/handle-agent.ts';
+export type {
+	AgentHandler,
+	CreateContextFn,
+	HandleAgentOptions,
+	RunHandlerFn,
+	StartWebhookFn,
+} from './runtime/handle-agent.ts';
+export { createFlueApp } from './runtime/flue-middleware.ts';
+export type { AgentManifest, FlueMiddlewareConfig } from './runtime/flue-middleware.ts';
 
 /**
  * Resolve a `provider/model-id` string into a pi-ai `Model` object.

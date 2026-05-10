@@ -87,14 +87,17 @@ export class CloudflarePlugin implements BuildPlugin {
 			2,
 		);
 
-		// Generate one DO class per webhook agent
+		// Generate one DO class per webhook agent. Each class delegates to
+		// `dispatchAgent` (a small wrapper around the shared
+		// `handleAgentRequest` runtime helper that supplies CF-specific
+		// keepalive / fiber wrappers).
 		const agentClasses = webhookAgents
 			.map((a) => {
 				const className = agentClassName(a.name);
 				const handlerVar = agentVarName(a.name, agents.indexOf(a));
 				return `export class ${className} extends Agent {
   async onRequest(request) {
-    return handleAgentRequest(request, this, ${JSON.stringify(a.name)}, ${handlerVar});
+    return dispatchAgent(request, this, ${JSON.stringify(a.name)}, ${handlerVar});
   }
 
   async onFiberRecovered(ctx) {
@@ -128,9 +131,8 @@ import {
   InMemorySessionStore,
   bashFactoryToSessionEnv,
   resolveModel,
-  parseJsonBody,
   toHttpResponse,
-  toSseData,
+  handleAgentRequest,
   AgentNotFoundError,
   MethodNotAllowedError,
   RouteNotFoundError,
@@ -296,154 +298,54 @@ function assertAgentsDurabilityApi(doInstance, method) {
 	}
 }
 
-function runHandlerWithKeepAlive(doInstance, ctx, handler) {
-  return runWithInstanceContext(doInstance, () => {
-    assertAgentsDurabilityApi(doInstance, 'keepAliveWhile');
-    return doInstance.keepAliveWhile(() => handler(ctx));
-  });
-}
-
-function startWebhookFiber(doInstance, requestId, agentName, id, payload, handler, req) {
-  const run = async (fiber) => {
-    fiber?.stash?.({
-      version: 1,
-      kind: 'webhook',
-      agentName,
-      id,
-      requestId,
-      phase: 'running',
-      startedAt: Date.now(),
-    });
-
-    const ctx = createContextForRequest(id, payload, doInstance, req);
-    return runWithInstanceContext(doInstance, async () => {
-      try {
-        return await handler(ctx);
-      } finally {
-        ctx.setEventCallback(undefined);
-      }
-    });
-  };
-
-  assertAgentsDurabilityApi(doInstance, 'runFiber');
-  return doInstance.runFiber('flue:webhook:' + requestId, run);
-}
-
 async function handleFlueFiberRecovered(ctx, _doInstance, agentName) {
   if (!ctx.name || !ctx.name.startsWith('flue:')) return;
   console.warn('[flue] Cloudflare fiber interrupted:', agentName, ctx.name, ctx.snapshot ?? null);
 }
 
-// ─── Shared Request Handler ────────────────────────────────────────────────
+// ─── Per-DO Dispatch ───────────────────────────────────────────────────────
 
-async function handleAgentRequest(request, doInstance, agentName, handler) {
-  // Agent id is the DO "room name" set by routeAgentRequest
-  const id = doInstance.name;
+/**
+ * Per-DO entry point invoked from each generated agent class's onRequest().
+ * Wraps the shared handleAgentRequest with CF-specific bits:
+ *
+ *   - keepAliveWhile around the foreground handler so the DO doesn't
+ *     hibernate mid-stream.
+ *   - runFiber for fire-and-forget webhook execution so it survives across
+ *     hibernation.
+ *   - runWithCloudflareContext for AsyncLocalStorage-based env propagation
+ *     (the workers-ai provider reads env.AI through it).
+ */
+async function dispatchAgent(request, doInstance, agentName, handler) {
+  const id = doInstance.name; // DO room name set by routeAgentRequest
 
-  try {
-    // Parse the request body. Throws on invalid Content-Type or malformed
-    // JSON; returns {} for genuinely empty bodies (so no-payload agents
-    // still work).
-    const payload = await parseJsonBody(request);
-
-    const accept = request.headers.get('accept') || '';
-    const isWebhook = request.headers.get('x-webhook') === 'true';
-    const isSSE = accept.includes('text/event-stream') && !isWebhook;
-
-    // Fire-and-forget (webhook mode)
-    if (isWebhook) {
-      const requestId = crypto.randomUUID();
-      startWebhookFiber(doInstance, requestId, agentName, id, payload, handler, request).then(
-        (result) => {
-          console.log('[flue] Webhook handler complete:', agentName,
-            result !== undefined ? JSON.stringify(result) : '(no return)');
-        },
-        (err) => {
-          console.error('[flue] Webhook handler error:', agentName, err);
-        },
-      );
-      return new Response(JSON.stringify({ status: 'accepted', requestId }), {
-        status: 202,
-        headers: { 'content-type': 'application/json' },
-      });
-    }
-
-    // SSE streaming mode. Two error regimes meet here:
-    //   - Pre-stream errors (body parsing, etc.) have already thrown above
-    //     and are caught by the outer try/catch — rendered as plain HTTP
-    //     responses by toHttpResponse, since headers haven't been sent yet.
-    //   - Errors during agent execution surface as in-stream \`error\`
-    //     events with the canonical envelope (via toSseData), since by
-    //     then the 200 + text/event-stream headers are already on the wire.
-    if (isSSE) {
-      const { readable, writable } = new TransformStream();
-      const writer = writable.getWriter();
-      const encoder = new TextEncoder();
-      let eventId = 0;
-      let isIdle = false;
-
-      const writeSSE = async (data, event) => {
-        const lines = [];
-        if (event) lines.push('event: ' + event);
-        lines.push('id: ' + eventId++);
-        lines.push('data: ' + (typeof data === 'string' ? data : JSON.stringify(data)));
-        lines.push('', '');
-        await writer.write(encoder.encode(lines.join('\\n')));
+  return handleAgentRequest({
+    request,
+    agentName,
+    id,
+    handler,
+    createContext: (id_, payload, req) => createContextForRequest(id_, payload, doInstance, req),
+    startWebhook: (requestId, run) => {
+      const wrapped = (fiber) => {
+        fiber?.stash?.({
+          version: 1,
+          kind: 'webhook',
+          agentName,
+          id,
+          requestId,
+          phase: 'running',
+          startedAt: Date.now(),
+        });
+        return runWithInstanceContext(doInstance, run);
       };
-
-      const ctx = createContextForRequest(id, payload, doInstance, request);
-      ctx.setEventCallback((event) => {
-        if (event.type === 'idle') isIdle = true;
-        writeSSE(event, event.type).catch(() => {});
-      });
-
-      (async () => {
-        try {
-          const result = await runHandlerWithKeepAlive(doInstance, ctx, handler);
-          if (!isIdle) {
-            await writeSSE({ type: 'idle' }, 'idle');
-          }
-          await writeSSE(
-            { type: 'result', data: result !== undefined ? result : null },
-            'result',
-          );
-        } catch (err) {
-          await writeSSE(toSseData(err), 'error');
-          if (!isIdle) {
-            await writeSSE({ type: 'idle' }, 'idle');
-          }
-        } finally {
-          ctx.setEventCallback(undefined);
-          await writer.close();
-        }
-      })();
-
-      return new Response(readable, {
-        headers: {
-          'content-type': 'text/event-stream',
-          'cache-control': 'no-cache',
-          'connection': 'keep-alive',
-        },
-      });
-    }
-
-    // Sync mode (default)
-    const ctx = createContextForRequest(id, payload, doInstance, request);
-    try {
-      const result = await runHandlerWithKeepAlive(doInstance, ctx, handler);
-      return new Response(
-        JSON.stringify({ result: result !== undefined ? result : null }),
-        { headers: { 'content-type': 'application/json' } },
-      );
-    } finally {
-      ctx.setEventCallback(undefined);
-    }
-  } catch (err) {
-    // toHttpResponse logs unknowns via flueLog.error — no extra console.error
-    // needed here. The agentName tag is captured in the wrapped error's
-    // server-side log line via flueLog's prefix.
-    return toHttpResponse(err);
-  }
+      assertAgentsDurabilityApi(doInstance, 'runFiber');
+      return doInstance.runFiber('flue:webhook:' + requestId, wrapped);
+    },
+    runHandler: (ctx, h) => runWithInstanceContext(doInstance, () => {
+      assertAgentsDurabilityApi(doInstance, 'keepAliveWhile');
+      return doInstance.keepAliveWhile(() => h(ctx));
+    }),
+  });
 }
 
 // ─── Per-Agent Durable Object Classes ──────────────────────────────────────
@@ -508,7 +410,7 @@ export default {
           });
         }
         // All gating passed. Delegate to the Agents SDK / partyserver, which
-        // dispatches into the per-agent DO's onRequest → handleAgentRequest.
+        // dispatches into the per-agent DO's onRequest → dispatchAgent.
         // routeAgentRequest may still return null for shape mismatches we
         // didn't anticipate; treat that as a route_not_found with a hint.
         const response = await routeAgentRequest(request, env);
