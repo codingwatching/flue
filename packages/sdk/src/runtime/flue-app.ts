@@ -109,17 +109,7 @@ export interface FlueRuntime {
 	) => Promise<Response | null>;
 }
 
-/**
- * Module-scoped runtime config. Seeded once by the generated server
- * entry; read at request time by {@link flue}'s route handlers. The
- * lazy read matters: ESM hoists the generated entry's `import userApp
- * from '<app.ts>'` above its `configureFlueRuntime(...)` call, so the
- * user's `app.ts` evaluates first and any top-level `flue()` invocations
- * there run before the seed lands. Reading the config at request time
- * (rather than at `flue()` call time) sidesteps the order: by the time
- * any request arrives, the generated entry has finished evaluating and
- * the seed is in place.
- */
+/** Module-scoped runtime config seeded by the generated server entry. */
 let runtimeConfig: FlueRuntime | undefined;
 
 /**
@@ -154,8 +144,7 @@ export function configureFlueRuntime(cfg: FlueRuntime): void {
  * legal but pointless — both sub-apps read from the same seeded
  * runtime and produce identical responses.
  *
- * Importable from `@flue/sdk/app`. Not re-exported from the root
- * `@flue/sdk` barrel — see the header comment in `src/app.ts` for why.
+ * Importable from `@flue/sdk/app`.
  */
 export function flue(): Hono {
 	const app = new Hono();
@@ -208,11 +197,7 @@ export function createDefaultFlueApp(): Hono {
 const agentRouteHandler: MiddlewareHandler = async (c) => {
 	const rt = runtimeConfig;
 	if (!rt) {
-		// This branch fires only if `flue()` was mounted and a request
-		// landed before the generated entry seeded the runtime — which
-		// should be impossible under the documented build flow. The
-		// distinct error message exists so the failure mode is
-		// obvious rather than surfacing as a generic 500.
+		// `flue()` only works inside a generated server entry.
 		throw new Error(
 			'[flue] flue() route invoked before runtime was configured. ' +
 				'This usually means flue() was used outside a Flue-built server entry.',

@@ -1,31 +1,4 @@
-/**
- * Per-agent request dispatcher shared by both build targets.
- *
- * The Node and Cloudflare targets used to inline ~150 lines of nearly-identical
- * dispatch logic each (parse body, pick mode, run handler, render response).
- * That code lived in build-plugin string templates — every change had to be
- * made in two places, and the only test surface was running an agent end-to-end
- * after a full build. This module collapses both targets onto one routine.
- *
- * The two targets differ in a few small ways that this routine can't reasonably
- * collapse, so they're surfaced as injection points on {@link HandleAgentOptions}:
- *
- *   - **Webhook execution wrapper**. On Cloudflare, fire-and-forget requests
- *     run inside `doInstance.runFiber(...)` so they survive isolate hibernation.
- *     On Node, they're just promise-spawned in-process. The caller passes
- *     {@link HandleAgentOptions.startWebhook} which encapsulates the difference.
- *
- *   - **Foreground handler wrapper**. On Cloudflare, sync/SSE requests run
- *     inside `doInstance.keepAliveWhile(...)` so the DO doesn't hibernate
- *     mid-stream. On Node, the handler is called directly.
- *
- *   - **Context construction**. Each target builds its own `FlueContextInternal`
- *     (different `env`, default store, sandbox resolver). The caller provides
- *     a `createContext` factory.
- *
- * Everything else (mode selection, JSON envelope, SSE event framing, error
- * routing) is identical and lives here.
- */
+/** Shared per-agent HTTP dispatcher for the Node and Cloudflare targets. */
 
 import { parseJsonBody, toHttpResponse, toSseData } from '../error-utils.ts';
 import type { FlueContextInternal } from '../client.ts';

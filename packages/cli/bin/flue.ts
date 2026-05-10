@@ -731,13 +731,7 @@ function startServer(
 	});
 }
 
-/**
- * Heuristic check for "server hasn't bound the port yet". Node's
- * undici fetch throws an ErrorCause-wrapped ECONNREFUSED on these
- * cases; the surface depends on Node version, so we match
- * structurally on either the cause's `code` or a message containing
- * `ECONNREFUSED`.
- */
+/** True when fetch failed before the child server accepted connections. */
 function isConnectionRefusedError(err: unknown): boolean {
 	if (!(err instanceof Error)) return false;
 	const cause = (err as { cause?: { code?: string; message?: string } }).cause;
@@ -885,15 +879,7 @@ async function run(args: RunArgs) {
 	serverProcess.stdout?.on('data', pipeServerOutput);
 	serverProcess.stderr?.on('data', pipeServerOutput);
 
-	// 4. POST to the agent via SSE.
-	//
-	// We retry on ECONNREFUSED for a few seconds because the child server
-	// process takes a moment to bind its port after spawn. There's no
-	// liveness endpoint to poll — `flue` deliberately doesn't impose one,
-	// and projects that want one author it themselves in `app.ts`.
-	// Beyond ECONNREFUSED we surface the error to the user immediately so
-	// they can see it; runaway servers are the user's responsibility to
-	// monitor.
+	// Retry the real request briefly while the child binds its port.
 	console.error(`[flue] Running agent: ${args.agent}`);
 	const sseAbort = new AbortController();
 	let outcome: { result?: any; error?: string };

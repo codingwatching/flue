@@ -1,9 +1,8 @@
 /**
  * Public surface for user-authored `app.ts` entries.
  *
- * Users who customize their server pipeline (custom Hono routes,
- * middleware, request rewriting, auth, custom model providers, etc.)
- * import everything they need from this subpath:
+ * Runtime-safe imports for user-authored app entries. Keep this subpath free
+ * of build-only dependencies; `app.ts` may be bundled for Workers.
  *
  *     import {
  *       flue,
@@ -13,15 +12,12 @@
  *     } from '@flue/sdk/app';
  *     import { Hono } from 'hono';
  *
- *     // Define a brand-new prefix backed by a fresh Model template.
  *     registerProvider('my-anthropic', {
  *       api: 'openai-completions',
  *       baseUrl: 'https://api.anthropic.com/v1',
  *       apiKey: process.env.ANTHROPIC_API_KEY,
  *     });
  *
- *     // Patch transport-level settings on a built-in provider while keeping
- *     // pi-ai's catalog (cost, contextWindow, thinkingLevelMap, …).
  *     configureProvider('anthropic', {
  *       baseUrl: process.env.ANTHROPIC_BASE_URL,
  *       apiKey: process.env.ANTHROPIC_API_KEY,
@@ -32,21 +28,6 @@
  *     app.route('/', flue());
  *     export default app;
  *
- * Why a subpath instead of the SDK root: the root barrel re-exports
- * build-time symbols (`build`, `dev`) that pull in heavy build-only
- * dependencies (notably `typescript` for agent-file parsing). Bundlers
- * for the deploy target — wrangler in particular — walk the entire
- * import graph from a user's `app.ts`, and even with tree-shaking
- * those dependencies sneak into the worker bundle and break at
- * runtime (`__filename is not defined` from the TS lib code that
- * expects Node globals).
- *
- * Splitting the runtime API onto its own subpath fixes this by
- * construction: `@flue/sdk/app` only re-exports runtime values, never
- * touches `build.ts` or `dev.ts`, and stays small in the worker bundle.
- *
- * Connector authors who wire up custom sandboxes still go through
- * `@flue/sdk/sandbox` — that's a separate audience and a separate surface.
  */
 export { flue } from './runtime/flue-app.ts';
 export {

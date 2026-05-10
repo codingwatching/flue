@@ -1,33 +1,4 @@
-/**
- * Runtime provider registry consumed by `resolveModel`.
- *
- * Two layers compose here, intentionally distinct because they answer
- * different questions:
- *
- *   1. **pi-ai's `apiProviderRegistry`** (api string → wire-protocol handler).
- *      Owned by `@mariozechner/pi-ai` itself. We re-export pi-ai's
- *      `registerApiProvider` from here so users that need to register a
- *      brand-new wire protocol have a one-stop import surface.
- *
- *   2. **Flue's `userModels` map** (URL-prefix string → partial pi-ai Model
- *      template). Owned here. When agent code calls `init({ model:
- *      'foo/bar' })`, `resolveModel` looks up `'foo'` in this map to get the
- *      partial Model template (`baseUrl`, `apiKey`, `binding`, …) and fills
- *      in the model id. This is the layer that lets users define a named
- *      provider once and reference it by URL prefix everywhere.
- *
- * Both layers are module-scoped on purpose. Module scope is per-isolate on
- * Cloudflare (each Durable Object isolate, plus the worker entry isolate,
- * gets its own copy populated identically by the same `app.ts` import). On
- * Node it's per-process. Last-write-wins matches pi-ai's own registry
- * semantics; calling `registerProvider` twice with the same name overwrites.
- *
- * The Flue-side registry exists, rather than folding everything into
- * pi-ai's, because pi-ai expects callers to construct a fully-formed
- * `Model<Api>` themselves — it has no concept of "URL prefix → partial
- * Model template." That mapping is the thing Flue adds. Trying to express
- * it inside pi-ai's registry would smear two different concerns together.
- */
+/** Runtime provider registries consumed by `resolveModel` and Session. */
 
 import {
 	registerApiProvider as piRegisterApiProvider,
@@ -43,11 +14,8 @@ import type { ProviderSettings } from '../types.ts';
 // ─── Public types ───────────────────────────────────────────────────────────
 
 /**
- * Cloudflare Workers AI binding shape. Typed structurally rather than via
- * `@cloudflare/workers-types` so this module stays import-safe on the Node
- * target (where workers-types is irrelevant). The user passes whatever
- * `env.AI` resolves to; `runtime/providers.ts` only needs the `run` method
- * surface that the workers-ai stream function consumes.
+ * Minimal Workers AI binding shape. Kept structural so `@flue/sdk/app` stays
+ * importable on Node.
  */
 export interface CloudflareAIBinding {
 	run(
@@ -58,27 +26,8 @@ export interface CloudflareAIBinding {
 }
 
 /**
- * Discriminated union on `api`. Two cases today:
- *
- *   - HTTP wire formats (`'openai-completions'`, `'anthropic-messages'`,
- *     anything else pi-ai ships): `baseUrl` is required; `apiKey` and
- *     `headers` are optional auth surfaces.
- *
- *   - `'cloudflare-ai-binding'`: dispatches via `env.AI.run()` rather than
- *     HTTP, so `baseUrl` is meaningless. Instead we capture the actual
- *     binding object on `binding`.
- *
- * `api` is typed as `Api` (pi-ai's `KnownApi | (string & {})`) so unknown
- * APIs registered via `registerApiProvider` still type-check.
- *
- * On TS narrowing: `Api = KnownApi | (string & {})` defeats the obvious
- * `Exclude<Api, 'cloudflare-ai-binding'>` discriminator (the open-string
- * brand swallows the literal). Both variants therefore type `api` as `Api`
- * and use the {@link isCloudflareBindingRegistration} type predicate to
- * narrow at use sites. User-facing inference still works as expected:
- * passing `{ api: 'openai-completions', baseUrl: '...' }` requires
- * `baseUrl`, and passing `{ api: 'cloudflare-ai-binding', binding: ... }`
- * requires `binding` — TS resolves the union by structural compatibility.
+ * Provider declarations keyed by URL prefix. HTTP providers carry endpoint
+ * settings; Workers AI binding providers carry the captured binding object.
  */
 export type ProviderRegistration =
 	| HttpProviderRegistration
@@ -94,12 +43,11 @@ export interface HttpProviderRegistration {
 	 * env-var lookup produces if unset.
 	 */
 	apiKey?: string;
-	/** Optional default headers merged into every outgoing request. */
+	/** Optional default headers for every outgoing request. */
 	headers?: Record<string, string>;
 	/**
 	 * Override the pi-ai `provider` slug surfaced on AssistantMessage records
-	 * and used as the key for `init({ providers: { ... } })` overrides.
-	 * Defaults to the registry name (the key passed to `registerProvider`).
+	 * and `configureProvider()` overrides. Defaults to the registry name.
 	 */
 	provider?: string;
 }
@@ -116,10 +64,7 @@ export interface CloudflareAIBindingRegistration {
 }
 
 /**
- * Type predicate that narrows {@link ProviderRegistration} to the
- * Cloudflare AI binding case. Used internally because pi-ai's `Api` type
- * (`KnownApi | (string & {})`) prevents direct `def.api === '...'`
- * comparison from narrowing the discriminated union.
+ * pi-ai's open-ended `Api` type prevents direct discriminator narrowing.
  */
 function isCloudflareBindingRegistration(
 	def: ProviderRegistration,
@@ -130,31 +75,16 @@ function isCloudflareBindingRegistration(
 // ─── Registry ───────────────────────────────────────────────────────────────
 
 /**
- * Module-scoped registry. Populated once per isolate at module init time
- * (the generated server entry's internal registrations + the user's
- * `app.ts` top-level calls). Read at request time by
- * {@link resolveRegisteredModel}, which `internal.ts:resolveModel` calls
- * before falling back to pi-ai's static catalog.
+ * URL-prefix registry populated at module init by `app.ts` and generated
+ * server entries.
  */
 const userModels = new Map<string, ProviderRegistration>();
 
 /**
  * Register a Flue-level model provider keyed by URL prefix.
  *
- * The same call shape works on Node and Cloudflare. On Cloudflare, top-level
- * access to `env` from `cloudflare:workers` is required to capture binding
- * references like `env.AI`; reading `env.SOMETHING_VAR` for plain string
- * env vars works at module top level too (Workers populates them lazily on
- * first access).
- *
- * Last-write-wins. Calling `registerProvider('foo', ...)` twice with the
- * same name simply overwrites — matches pi-ai's `registerApiProvider`
- * semantics. Note that on Cloudflare, the generated `_entry.ts` registers
- * its internal `'cloudflare'` provider AFTER the user's `app.ts` is
- * imported (ESM hoisting), so user attempts to rebind that specific name
- * are overridden by the build's own registration. If you need a different
- * Cloudflare-side integration, register it under a non-`cloudflare`
- * prefix.
+ * Last-write-wins. On Cloudflare, the generated entry reserves the
+ * `cloudflare` prefix for the built-in Workers AI binding integration.
  */
 export function registerProvider(
 	name: string,
@@ -164,33 +94,20 @@ export function registerProvider(
 }
 
 /**
- * Read accessor. Returns the live `Map`; not a snapshot. Internal-only —
- * exposed for `internal.ts:resolveModel` to consult when resolving model
- * strings. NOT exported from `@flue/sdk/app`; users should treat the
- * registry as write-only via {@link registerProvider}.
+ * Internal read accessor. Returns the live map.
  */
 export function getRegisteredProviders(): ReadonlyMap<string, ProviderRegistration> {
 	return userModels;
 }
 
 /**
- * Look up an apiKey by pi-ai provider slug. Walks the registry and matches
- * each entry's effective `provider` field — which is either the override on
- * the registration or the registry name (`workers-ai` for binding entries
- * regardless of name, matching {@link buildModelFromRegistration}'s output).
- *
- * Used by the session harness's `getApiKey(provider)` callback as the
- * fallback after consulting the explicit `init({ providers: { ... } })`
- * config. Returns undefined when no registered provider matches or matched
- * entries have no apiKey set.
+ * Look up a registration apiKey by the resolved pi-ai provider slug.
  */
 export function getRegisteredApiKey(provider: string): string | undefined {
 	for (const [name, def] of userModels) {
 		const effective = effectiveProviderSlug(name, def);
 		if (effective !== provider) continue;
-		// Only HTTP registrations carry apiKey; binding entries don't have
-		// the field. The narrowing below also satisfies the TS type
-		// system, which can't read `'apiKey' in def` as a discriminator.
+		// Only HTTP registrations carry apiKey.
 		if (!isCloudflareBindingRegistration(def)) return def.apiKey;
 	}
 	return undefined;
@@ -215,48 +132,19 @@ export const registerApiProvider = piRegisterApiProvider;
 
 // ─── Provider override registry ─────────────────────────────────────────────
 //
-// Companion to {@link registerProvider}. Where `registerProvider` adds a
-// brand-new URL prefix backed by a freshly-constructed Model template,
-// `configureProvider` patches an EXISTING provider — typically one of pi-ai's
-// built-in catalog entries (`anthropic`, `openai`, `google`, …) whose
-// `cost`/`contextWindow`/`thinkingLevelMap` we want to keep, but whose
-// transport-level settings (baseUrl for a corporate gateway, an apiKey
-// sourced from a runtime env var, additional default headers) we need to
-// override.
-//
-// Keyed by pi-ai provider slug — the value of `Model.provider`, which is
-// what `init({ model: 'anthropic/...' })` resolves to and what
-// `AssistantMessage.provider` carries on every turn. Distinct from
-// `userModels` which is keyed by URL prefix; the two are different concepts
-// even though they often coincide (URL prefix `'anthropic'` happens to
-// resolve to provider `'anthropic'`).
-//
-// Last-write-wins, module-scoped. Same lifecycle story as the rest of the
-// runtime registry: populated once per isolate at module init, read at
-// request time.
+// Transport-level settings keyed by resolved pi-ai provider slug. This keeps
+// built-in catalog metadata intact while letting apps patch auth/endpoints.
 
 /**
- * Provider settings applied on top of the resolved Model literal. Mirrors
- * `ProviderSettings` from `types.ts` — same shape, exported for explicit
- * documentation at the call site of {@link configureProvider}.
+ * Provider settings accepted by {@link configureProvider}.
  */
 export type ProviderConfiguration = ProviderSettings;
 
 const providerOverrides = new Map<string, ProviderSettings>();
 
 /**
- * Override settings for an existing provider. Use this when the provider
- * already exists (either in pi-ai's built-in catalog or via a prior
- * `registerProvider` call) and you only want to patch transport-level
- * concerns:
- *
- * - `baseUrl` — route through a corporate gateway / proxy / litellm
- * - `apiKey`  — supply a key from `process.env` or a Cloudflare binding
- *               (sourced at module top-level where `env` is in scope)
- * - `headers` — merged into the model's default headers, override on collision
- * - `storeResponses` — opt-in to OpenAI's server-side persistence on the
- *                       Responses API; see `ProviderSettings.storeResponses`
- *                       for the narrow conditions that require this
+ * Patch transport-level settings on an existing provider while preserving its
+ * resolved Model metadata (cost, context window, token limits, etc.).
  *
  * ```ts
  * import { configureProvider } from '@flue/sdk/app';
@@ -267,16 +155,8 @@ const providerOverrides = new Map<string, ProviderSettings>();
  * });
  * ```
  *
- * Keyed by **pi-ai provider slug** (the `provider` field on the resolved
- * Model), not by the URL prefix the user types. For pi-ai's built-ins the
- * two coincide; for `registerProvider` entries the slug defaults to the
- * registry name unless overridden. Cloudflare-AI-binding registrations
- * always resolve to provider `'workers-ai'` — that's the slug to pass here
- * if you need to override anything on that path.
- *
- * Last-write-wins: calling `configureProvider` twice with the same slug
- * overwrites entirely (no merge). If you need to patch incrementally,
- * read the current settings via {@link getProviderConfiguration} first.
+ * Keyed by the resolved `Model.provider` value, not necessarily the URL
+ * prefix. Last-write-wins.
  */
 export function configureProvider(
 	provider: string,
@@ -286,13 +166,7 @@ export function configureProvider(
 }
 
 /**
- * Read accessor for the override registry. Returns the configured settings
- * for `provider` or `undefined` if none. Internal — consumed by
- * `internal.ts:resolveModel` (for `baseUrl`/`headers`),
- * `session.ts:getProviderApiKey` (for `apiKey`), and
- * `session.ts:applyProviderPayloadOverrides` (for `storeResponses`). Not
- * exported from `@flue/sdk/app`; users treat the registry as write-only via
- * {@link configureProvider}.
+ * Internal read accessor for provider overrides.
  */
 export function getProviderConfiguration(
 	provider: string,
@@ -303,11 +177,7 @@ export function getProviderConfiguration(
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
 /**
- * Resolve `'name/modelId'` against the runtime registry. Returns a fully
- * constructed pi-ai `Model<Api>` literal, or `undefined` if nothing
- * matches `name`. The constructed Model carries a non-pi-ai `binding`
- * field for `cloudflare-ai-binding` registrations so the workers-ai stream
- * function can read it without going through AsyncLocalStorage.
+ * Resolve `'name/modelId'` against the URL-prefix registry.
  */
 export function resolveRegisteredModel(
 	name: string,
@@ -319,20 +189,9 @@ export function resolveRegisteredModel(
 }
 
 /**
- * Construct a pi-ai `Model<Api>` literal from a registration.
- *
- * Cost / context-window / maxTokens are zeroed because no static catalog
- * exists for user-defined providers. Flue features that read those (cost
- * display, overflow detection) degrade gracefully when zero.
- *
- * `apiKey` is intentionally NOT placed on the Model literal — pi-ai's
- * `Model<Api>` type doesn't carry an `apiKey` field. It flows through the
- * harness's `getApiKey(provider)` callback instead; see
- * {@link getRegisteredApiKey}.
- *
- * The `binding` field on the cloudflare-ai-binding case IS placed on the
- * Model literal as a non-pi-ai extension. The workers-ai stream function
- * reads it back via a structural cast at request time.
+ * Construct a pi-ai Model from a registered provider template. User-defined
+ * providers do not have catalog metadata, so cost and context limits default
+ * to zero. apiKey flows through `getApiKey`; it is not part of pi-ai's Model.
  */
 function buildModelFromRegistration(
 	name: string,
@@ -351,9 +210,7 @@ function buildModelFromRegistration(
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 0,
 			maxTokens: 0,
-			// Non-pi-ai extension. Read by `cloudflare/workers-ai-provider.ts`
-			// off the resolved Model literal so the request-time path doesn't
-			// have to consult AsyncLocalStorage.
+			// Non-pi-ai extension read by the Workers AI stream function.
 			binding: def.binding,
 		} as Model<Api> & { binding: CloudflareAIBinding };
 	}
@@ -374,10 +231,7 @@ function buildModelFromRegistration(
 }
 
 /**
- * Compute the effective pi-ai provider slug for a registration. Mirrors
- * the logic inside {@link buildModelFromRegistration} — kept in sync by
- * being expressed as a single helper used by both the model builder and
- * {@link getRegisteredApiKey}'s reverse lookup.
+ * Compute the provider slug emitted on the resolved Model.
  */
 function effectiveProviderSlug(name: string, def: ProviderRegistration): string {
 	if (isCloudflareBindingRegistration(def)) {
@@ -385,4 +239,3 @@ function effectiveProviderSlug(name: string, def: ProviderRegistration): string 
 	}
 	return def.provider ?? name;
 }
-

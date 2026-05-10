@@ -127,33 +127,13 @@ ${agentImports}
 ${userAppImport}
 
 // ─── Internal provider registrations ────────────────────────────────────────
-//
-// These statements run AFTER every imported module's body, including the
-// user's app.ts (if any) — ESM hoists imports to the top of evaluation,
-// so the import block above resolves all dependencies (and runs their
-// top-level code, including any \`registerProvider\` calls in app.ts)
-// before this _entry.ts file's own top-level statements execute.
-//
-// Both pi-ai's registry and Flue's registry are last-write-wins, so
-// these internal registrations therefore OVERRIDE any user attempt to
-// rebind the same names. Treating "cloudflare" / the cloudflare-ai-binding
-// api as reserved is intentional: rebinding them at the user level
-// almost always means the user is reaching for the wrong abstraction
-// (the right one is a different prefix that points at their custom
-// endpoint or proxy). If a user does need a non-default cloudflare-side
-// integration, they pick a different prefix.
+// Imports evaluate before this file's top-level body, so these built-ins
+// reserve the \`cloudflare\` prefix after any user app.ts registrations run.
 
-// Wire-protocol handler for the cloudflare-ai-binding api. Must be present
-// in pi-ai's registry by the time agent code calls
-// \`init({ model: 'cloudflare/...' })\`.
+// Wire-protocol handler for the cloudflare-ai-binding api.
 registerApiProvider(getCloudflareAIBindingApiProvider());
 
-// URL-prefix mapping. Captures env.AI at module top level — legal because
-// reading a binding reference is not I/O. The actual binding methods are
-// invoked later inside the agent's request handler. Guard ensures that
-// projects without an AI binding declared in wrangler.jsonc fail with a
-// clean "no provider 'cloudflare' registered" error from resolveModel
-// instead of an opaque crash deep inside the workers-ai stream function.
+// Capture the binding reference at module init; invoke it only per request.
 if (env.AI) {
   registerProvider('cloudflare', {
     api: 'cloudflare-ai-binding',

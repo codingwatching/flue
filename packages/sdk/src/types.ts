@@ -163,58 +163,17 @@ export interface CompactionConfig {
 
 // ─── Provider Runtime Settings ──────────────────────────────────────────────
 
-/**
- * Per-provider transport-level settings. Set via
- * `configureProvider(slug, settings)` from `@flue/sdk/app`, applied at
- * model-resolution time (`baseUrl`, `headers`), apiKey-lookup time
- * (`session.ts:getProviderApiKey`), and request-payload time
- * (`storeResponses`).
- *
- * Type still lives in the public types barrel because external connectors
- * occasionally need to reference the shape; the actual write path is
- * `configureProvider`, not a field on any agent-author API.
- */
+/** Per-provider transport settings configured from `@flue/sdk/app`. */
 export interface ProviderSettings {
-	/**
-	 * Provider endpoint used by built-in models. Useful for API gateways,
-	 * LiteLLM-style proxies, or enterprise-managed provider endpoints.
-	 */
+	/** Provider endpoint used by built-in models or registered providers. */
 	baseUrl?: string;
-	/**
-	 * Headers merged into the resolved model's provider-level headers. Values
-	 * here override headers already defined by the built-in model.
-	 */
+	/** Headers merged into the resolved model's provider-level headers. */
 	headers?: Record<string, string>;
-	/**
-	 * API key returned to the underlying agent runtime for this provider.
-	 * Useful when the gateway requires a dummy key or when credentials should
-	 * come from the agent's runtime env instead of process-global env vars.
-	 */
+	/** API key returned to the underlying agent runtime for this provider. */
 	apiKey?: string;
 	/**
-	 * Sets `store: true` on OpenAI Responses API requests for this provider.
-	 *
-	 * Only applies to providers using the `openai-responses` or
-	 * `azure-openai-responses` API (e.g. `openai`, `azure`); ignored for
-	 * Anthropic, Google, Codex Responses, and other backends. Defaults to
-	 * `false`, matching the underlying pi-ai default.
-	 *
-	 * Enable this only if you need multi-turn conversations with reasoning
-	 * models (e.g. gpt-5, gpt-5.5) **and** explicit `thinkingLevel: "off"`.
-	 * In that combination, pi-ai does not request encrypted reasoning content
-	 * back, and subsequent turns reference per-item ids (`fc_*`, `msg_*`,
-	 * `rs_*`) that OpenAI 404s with `"Items are not persisted when store is
-	 * set to false."`. Setting `store: true` opts those items into OpenAI's
-	 * server-side persistence so the references resolve.
-	 *
-	 * The default `thinkingLevel` of `"medium"` already keeps reasoning models
-	 * on the stateless encrypted-reasoning path and does not require this
-	 * flag. Most agents do not need to set it.
-	 *
-	 * **Data retention:** enabling this opts the conversation into OpenAI's
-	 * server-side storage (subject to your org's retention policy, default
-	 * 30 days). Do not enable on ZDR tiers or when handling data that must
-	 * not leave your control.
+	 * Sends `store: true` for OpenAI Responses API providers. Only enable when
+	 * you need OpenAI-hosted item persistence and accept its retention policy.
 	 */
 	storeResponses?: boolean;
 }

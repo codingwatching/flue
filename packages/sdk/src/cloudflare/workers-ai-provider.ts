@@ -2,13 +2,8 @@
  * Pi-ai provider that dispatches via `env.AI.run()` instead of HTTP.
  * Registered under the `cloudflare-ai-binding` API.
  *
- * Binding access: the binding is captured at registration time
- * (top of the generated `_entry.ts`, via `import { env } from
- * 'cloudflare:workers'`) and stashed on the resolved Model literal as a
- * non-pi-ai `binding` field. This stream function reads it back off the
- * Model — no AsyncLocalStorage required for binding lookup. The binding
- * reference itself is stable across all isolates (worker + every DO),
- * so capture-once is safe.
+ * Binding access: the generated entry captures `env.AI` at module init and
+ * stores it on the resolved Model as a non-pi-ai `binding` field.
  *
  * Wire format: Workers AI accepts the OpenAI-completions request body, so
  * we translate via pi-ai's `convertMessages` and parse the binding's SSE
@@ -547,14 +542,7 @@ type RunOverload = (
 ) => Promise<Response | Record<string, unknown>>;
 
 /**
- * Read the captured binding off the resolved Model literal. The build's
- * generated `_entry.ts` registers the `cloudflare` provider with
- * `binding: env.AI` at module top level (when `env.AI` is present); that
- * field is propagated through to the constructed Model by
- * `runtime/providers.ts:buildModelFromRegistration` and read here at
- * stream time. Throws with a clear, actionable message if the binding is
- * absent — typically caused by the user declaring a `cloudflare/...`
- * model without adding `ai: { binding: 'AI' }` to their wrangler.jsonc.
+ * Read the binding extension carried on the resolved Model.
  */
 function resolveBinding(model: Model<CloudflareAIBindingApi>): Ai {
 	const ai = (model as Model<CloudflareAIBindingApi> & { binding?: unknown }).binding;
@@ -601,10 +589,6 @@ async function safeReadText(response: Response): Promise<string | undefined> {
 
 /**
  * Return the pi-ai `ApiProvider` definition for the Cloudflare AI binding.
- * The generated Cloudflare entry calls
- * `registerApiProvider(getCloudflareAIBindingApiProvider())` at module
- * top level. Pi-ai's registry is keyed by `api`, last-write-wins, so
- * re-registering is harmless — no idempotency bookkeeping required here.
  */
 export function getCloudflareAIBindingApiProvider(): ApiProvider<
 	CloudflareAIBindingApi,

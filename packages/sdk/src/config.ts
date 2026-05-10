@@ -24,10 +24,8 @@
  * split: `UserFlueConfig` is what users author (everything optional);
  * `FlueConfig` is the resolved shape with required defaults filled in.
  *
- * Provider/model configuration intentionally does NOT live here. Use
- * `registerProvider(name, def)` from `@flue/sdk/app` inside `app.ts` —
- * that path runs at request time so it can read API keys and bindings
- * from the platform `env`, which a build-time config file cannot do.
+ * Provider/model configuration lives in `app.ts`, where runtime env is
+ * available.
  */
 
 import * as fs from 'node:fs';

@@ -34,11 +34,7 @@ export { bashFactoryToSessionEnv } from './sandbox.ts';
 //     keeps user projects from needing it as a direct dep when they
 //     don't author their own `app.ts`).
 //
-// The user-facing `flue()` itself is re-exported from `@flue/sdk/app`,
-// not here. Error helpers (`toHttpResponse`, the FlueError subclasses)
-// are not re-exported either — generated entries no longer need them
-// directly; everything error-shaped flows through `flue()` /
-// `createDefaultFlueApp` and their `onError` handlers.
+// The user-facing `flue()` itself is re-exported from `@flue/sdk/app`, not here.
 export { handleAgentRequest } from './runtime/handle-agent.ts';
 export type {
 	AgentHandler,
@@ -51,29 +47,8 @@ export { configureFlueRuntime, createDefaultFlueApp } from './runtime/flue-app.t
 export type { FlueRuntime } from './runtime/flue-app.ts';
 
 /**
- * Resolve a `provider/model-id` string into a pi-ai `Model` object.
- * Lives here (rather than in the generated entry point) so that user
- * projects don't have to declare `@mariozechner/pi-ai` as a direct
- * dependency — wrangler's bundler resolves bare specifiers from the entry
- * file's location, which on pnpm-isolated installs doesn't see Flue's
- * transitive deps. Centralizing the resolver here keeps `_entry.ts`
- * dependency-free apart from `@flue/sdk/*`.
- *
- * Resolution order (highest priority first):
- *
- *   1. The runtime provider registry written by `registerProvider(...)`
- *      calls in user `app.ts` files (and by Flue's own internal
- *      bootstrap, e.g. the Cloudflare AI binding entry registered at the
- *      top of the generated `_entry.ts`). Keyed by URL prefix — the part
- *      of the model string before the first `/`.
- *   2. pi-ai's static catalog via `getModel`.
- *
- * After resolution, `configureProvider()` overrides (keyed by the resolved
- * Model's pi-ai provider slug) are applied to patch transport-level
- * settings like `baseUrl` and `headers`. Read from
- * {@link getProviderConfiguration}; apiKey and storeResponses live on the
- * same registry but flow through `session.ts:getProviderApiKey` and
- * `session.ts:applyProviderPayloadOverrides` respectively.
+ * Resolve `provider/model-id` to a pi-ai Model. Registered URL prefixes win
+ * over pi-ai's catalog; configureProvider settings patch the resolved Model.
  */
 export function resolveModel(model: ModelConfig | undefined): Model<Api> | undefined {
 	if (model === false || model === undefined) return undefined;
@@ -90,9 +65,7 @@ export function resolveModel(model: ModelConfig | undefined): Model<Api> | undef
 	const provider = modelString.slice(0, slash);
 	const modelId = modelString.slice(slash + 1);
 
-	// 1. Runtime registry (registerProvider). Consulted before pi-ai so
-	//    users can shadow pi-ai built-ins — matches pi-ai's own
-	//    last-write-wins semantics on its API provider registry.
+	// Registered prefixes win over pi-ai's catalog.
 	const built = resolveRegisteredModel(provider, modelId);
 	if (built) {
 		if (modelId === '') {
@@ -102,18 +75,12 @@ export function resolveModel(model: ModelConfig | undefined): Model<Api> | undef
 					`was given. Use "${provider}/<model-id>".`,
 			);
 		}
-		// `resolveRegisteredModel` decides the final `provider` slug per
-		// registration shape (binding entries hardcode `'workers-ai'`,
-		// HTTP entries default to the registry name unless overridden).
-		// Apply configureProvider() overrides keyed by that resolved slug
-		// so the override key matches the field that surfaces on
-		// AssistantMessage records.
+		// Overrides are keyed by the resolved provider slug.
 		return applyProviderSettings(built, getProviderConfiguration(built.provider));
 	}
 
-	// 2. pi-ai catalog. `getModel` is overloaded on literal provider/modelId;
-	//    we cast through runtime strings and rely on the null-return check
-	//    below for unknowns.
+	// `getModel` is typed for literal model ids; runtime strings are checked by
+	// the null return below.
 	const resolved = getModel(provider as KnownProvider, modelId as never);
 	if (!resolved) {
 		throw new Error(

@@ -536,12 +536,7 @@ class NodeReloader implements DevReloader {
 			}
 		});
 
-		// No readiness probe: Flue intentionally doesn't impose a liveness
-		// endpoint on user apps, and dev is interactive — if the child
-		// crashes immediately, the `child.on('exit')` handler above logs
-		// it; if the port doesn't bind in time, the next request from
-		// outside (curl, agent-browser, etc.) will surface a connection
-		// error directly to the developer.
+		// No readiness probe: user apps own their routes, including health checks.
 	}
 
 	private async killChild(): Promise<void> {

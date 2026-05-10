@@ -539,33 +539,16 @@ export class Session implements FlueSession {
 	}
 
 	private getProviderApiKey(provider: string): string | undefined {
-		// Precedence: an explicit `configureProvider()` override (the
-		// runtime-side replacement for the old `init({ providers })` apiKey
-		// field) → the apiKey on a `registerProvider()` registration →
-		// undefined (pi-ai then falls back to its own env-var lookup, e.g.
-		// ANTHROPIC_API_KEY).
-		//
-		// configureProvider wins because that's the explicit "I want to patch
-		// this specific pi-ai provider" call; registerProvider wins as a
-		// fallback so users that defined a brand-new prefix with an apiKey
-		// don't also need to call configureProvider for it.
+		// Explicit provider configuration overrides apiKeys carried by registered
+		// provider templates. Undefined falls through to pi-ai's env-var lookup.
 		const override = getProviderConfiguration(provider)?.apiKey;
 		if (override !== undefined) return override;
 		return getRegisteredApiKey(provider);
 	}
 
 	/**
-	 * Mutate the outgoing provider request payload based on the provider's
-	 * runtime configuration (set via `configureProvider()` from
-	 * `@flue/sdk/app`).
-	 *
-	 * Currently only handles `storeResponses` for the OpenAI Responses API
-	 * (`openai-responses` and `azure-openai-responses`), which sets `store: true`
-	 * so multi-turn conversations against reasoning models with
-	 * `thinkingLevel: 'off'` can resolve per-item id references. The Codex
-	 * Responses provider rejects `store: true`, so it is intentionally skipped.
-	 *
-	 * Returning `undefined` keeps the upstream-built payload as-is.
+	 * Provider-specific payload overrides. Returning undefined keeps the
+	 * upstream-built payload as-is.
 	 */
 	private applyProviderPayloadOverrides(payload: unknown, model: Model<any>): unknown {
 		if (model.api !== 'openai-responses' && model.api !== 'azure-openai-responses') {
