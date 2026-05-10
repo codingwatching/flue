@@ -174,6 +174,40 @@ export function getProviderConfiguration(
 	return providerOverrides.get(provider);
 }
 
+// ─── Model binding extension ────────────────────────────────────────────────
+
+/**
+ * Resolved Model with the captured Workers AI binding attached as a non-pi-ai
+ * extension field. The binding flows from the registration through the
+ * resolved Model to the Workers AI stream function without going through
+ * AsyncLocalStorage.
+ */
+export type ModelWithBinding<TApi extends Api> = Model<TApi> & {
+	binding: CloudflareAIBinding;
+};
+
+/** Attach a Workers AI binding to a Model literal. */
+export function attachModelBinding<TApi extends Api>(
+	model: Model<TApi>,
+	binding: CloudflareAIBinding,
+): ModelWithBinding<TApi> {
+	return { ...model, binding } as ModelWithBinding<TApi>;
+}
+
+/**
+ * Read a Workers AI binding off a resolved Model, or `undefined` if no
+ * usable binding is attached.
+ */
+export function getModelBinding<TApi extends Api>(
+	model: Model<TApi>,
+): CloudflareAIBinding | undefined {
+	const candidate = (model as Model<TApi> & { binding?: unknown }).binding;
+	if (!candidate || typeof (candidate as { run?: unknown }).run !== 'function') {
+		return undefined;
+	}
+	return candidate as CloudflareAIBinding;
+}
+
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
 /**
@@ -199,7 +233,7 @@ function buildModelFromRegistration(
 	modelId: string,
 ): Model<Api> {
 	if (isCloudflareBindingRegistration(def)) {
-		return {
+		const base: Model<Api> = {
 			id: modelId,
 			name: modelId,
 			api: CLOUDFLARE_AI_BINDING_API,
@@ -210,9 +244,8 @@ function buildModelFromRegistration(
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 0,
 			maxTokens: 0,
-			// Non-pi-ai extension read by the Workers AI stream function.
-			binding: def.binding,
-		} as Model<Api> & { binding: CloudflareAIBinding };
+		};
+		return attachModelBinding(base, def.binding);
 	}
 
 	return {

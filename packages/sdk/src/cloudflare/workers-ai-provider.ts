@@ -28,6 +28,7 @@ import {
 } from '@mariozechner/pi-ai';
 import { convertMessages } from '@mariozechner/pi-ai/openai-completions';
 import { CLOUDFLARE_AI_BINDING_API, type CloudflareAIBindingApi } from '../cloudflare-model.ts';
+import { getModelBinding } from '../runtime/providers.ts';
 
 // ─── OpenAI-completions compat profile ──────────────────────────────────────
 
@@ -545,8 +546,8 @@ type RunOverload = (
  * Read the binding extension carried on the resolved Model.
  */
 function resolveBinding(model: Model<CloudflareAIBindingApi>): Ai {
-	const ai = (model as Model<CloudflareAIBindingApi> & { binding?: unknown }).binding;
-	if (!ai || typeof (ai as { run?: unknown }).run !== 'function') {
+	const ai = getModelBinding(model);
+	if (!ai) {
 		throw new Error(
 			'[flue] Cloudflare AI binding not available. ' +
 				'Models prefixed with "cloudflare/" require running on the Cloudflare ' +
