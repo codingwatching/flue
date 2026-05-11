@@ -235,7 +235,7 @@ const agentRouteHandler: MiddlewareHandler = async (c) => {
 	// keepalive / fiber wrappers. Hono's CF adapter populates
 	// `c.env` with the worker bindings, which is exactly what
 	// `routeAgentRequest` expects.
-	const response = await rt.routeAgentRequest!(c.req.raw, c.env);
+	const response = await routeWithDoRetry(rt.routeAgentRequest!, c.req.raw, c.env, name, id);
 	if (response) return response;
 
 	// `routeAgentRequest` returning null means no DO matched the
@@ -282,7 +282,7 @@ function runRouteHandler(action: HandleRunRouteOptions['action']): MiddlewareHan
 			});
 		}
 
-		const response = await rt.routeAgentRequest!(c.req.raw, c.env);
+		const response = await routeWithDoRetry(rt.routeAgentRequest!, c.req.raw, c.env, name, id);
 		if (response) return response;
 
 		throw new RouteNotFoundError({
@@ -290,6 +290,60 @@ function runRouteHandler(action: HandleRunRouteOptions['action']): MiddlewareHan
 			path: new URL(c.req.url).pathname,
 		});
 	};
+}
+
+// ─── Durable Object retry ──────────────────────────────────────────────────
+
+const DO_RETRY_MAX_ATTEMPTS = 3;
+const DO_RETRY_BASE_MS = 100;
+const DO_RETRY_MAX_MS = 800;
+
+/**
+ * Retry transient DO infrastructure errors (e.g. "Internal error in Durable
+ * Object storage caused object to be reset") with exponential backoff. These
+ * errors are thrown by workerd from `stub.fetch()` inside
+ * `routePartykitRequest` — before user code runs inside the DO — so they
+ * bypass the agents SDK's `_tryCatch` / `Agent::onError`. Retrying at the
+ * routing boundary is the only place this class of error can be handled.
+ *
+ * Per Cloudflare's docs: retry when `err.retryable === true`, never when
+ * `err.overloaded === true`. Body is cloned per attempt so the stream stays
+ * replayable; the stub is implicitly recreated on each `routeAgentRequest`
+ * call.
+ */
+async function routeWithDoRetry(
+	routeAgentRequest: NonNullable<FlueRuntime['routeAgentRequest']>,
+	request: Request,
+	env: unknown,
+	agentName: string,
+	instanceId: string,
+): Promise<Response | null> {
+	let attempt = 0;
+	while (true) {
+		try {
+			return await routeAgentRequest(request.clone(), env);
+		} catch (err) {
+			attempt += 1;
+			if (attempt >= DO_RETRY_MAX_ATTEMPTS || !isRetryableDoError(err)) throw err;
+			const delayMs =
+				Math.min(DO_RETRY_MAX_MS, DO_RETRY_BASE_MS * 2 ** (attempt - 1)) * Math.random();
+			console.warn(
+				`[flue] Transient DO error on attempt ${attempt}/${DO_RETRY_MAX_ATTEMPTS}, retrying in ${Math.round(delayMs)}ms:`,
+				`agent=${agentName} id=${instanceId}`,
+				err instanceof Error ? err.message : String(err),
+			);
+			await new Promise((resolve) => setTimeout(resolve, delayMs));
+		}
+	}
+}
+
+function isRetryableDoError(err: unknown): boolean {
+	if (!err || typeof err !== 'object') return false;
+	const e = err as { retryable?: unknown; overloaded?: unknown };
+	// `overloaded` takes precedence: never retry an overloaded DO, even if
+	// `retryable` is also set.
+	if (e.overloaded === true) return false;
+	return e.retryable === true;
 }
 
 /**
