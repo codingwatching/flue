@@ -8,6 +8,7 @@ const MAX_GREP_MATCHES = 100;
 const MAX_GREP_LINE_LENGTH = 500;
 const MAX_GLOB_RESULTS = 1000;
 
+/** Names reserved by the framework's default tool set. */
 export const BUILTIN_TOOL_NAMES = new Set([
 	'read',
 	'write',
@@ -289,7 +290,8 @@ const TaskParams = Type.Object({
 	),
 });
 
-function createTaskTool(
+/** Build Flue's framework-owned `task` tool. */
+export function createTaskTool(
 	runTask: (
 		params: TaskToolParams,
 		signal?: AbortSignal,

@@ -12,7 +12,7 @@ import type {
 import type * as v from 'valibot';
 import { abortErrorFor, createCallHandle } from './abort.ts';
 import {
-	BUILTIN_TOOL_NAMES,
+	createTaskTool,
 	createTools,
 	formatBashResult,
 	type TaskToolParams,
@@ -67,6 +67,7 @@ import type {
 	SessionEntry,
 	SessionEnv,
 	SessionStore,
+	SessionToolFactory,
 	ShellOptions,
 	ShellResult,
 	SkillOptions,
@@ -101,6 +102,7 @@ interface SessionInitOptions {
 	existingData: SessionData | null;
 	onAgentEvent?: FlueEventCallback;
 	agentTools?: ToolDef[];
+	toolFactory?: SessionToolFactory;
 	sessionRole?: string;
 	taskDepth?: number;
 	createTaskSession?: CreateTaskSession;
@@ -408,6 +410,7 @@ export class Session implements FlueSession {
 	private compactionAbortController: AbortController | undefined;
 	private eventCallback: FlueEventCallback | undefined;
 	private agentTools: ToolDef[];
+	private toolFactory: SessionToolFactory | undefined;
 	private deleted = false;
 	private activeOperation: OperationKind | undefined;
 	private activeOperationId: string | undefined;
@@ -427,6 +430,7 @@ export class Session implements FlueSession {
 		this.fs = createFlueFs(options.env);
 		this.store = options.store;
 		this.agentTools = options.agentTools ?? [];
+		this.toolFactory = options.toolFactory;
 		this.sessionRole = options.sessionRole;
 		this.taskDepth = options.taskDepth ?? 0;
 		this.createTaskSession = options.createTaskSession;
@@ -442,9 +446,10 @@ export class Session implements FlueSession {
 		assertRoleExists(this.config.roles, this.config.role);
 		assertRoleExists(this.config.roles, this.sessionRole);
 
+		const builtinTools = this.createBuiltinTools(this.env, []);
 		const tools = [
-			...this.createBuiltinTools(this.env, []),
-			...this.createCustomTools(this.agentTools),
+			...builtinTools,
+			...this.createCustomTools(this.agentTools, builtinTools),
 		];
 
 		const previousMessages = this.history.buildContext();
@@ -841,8 +846,11 @@ export class Session implements FlueSession {
 
 	// ─── Custom Tools ───────────────────────────────────────────────────────
 
-	private createCustomTools(tools: ToolDef[]): AgentTool<any>[] {
-		this.validateCustomToolNames(tools);
+	private createCustomTools(
+		tools: ToolDef[],
+		builtinTools: AgentTool<any>[],
+	): AgentTool<any>[] {
+		this.validateCustomToolNames(tools, builtinTools);
 
 		return tools.map(
 			(toolDef): AgentTool<any> => ({
@@ -862,13 +870,19 @@ export class Session implements FlueSession {
 		);
 	}
 
-	private validateCustomToolNames(tools: ToolDef[]): void {
+	/** Reject custom tools that collide with active built-ins or each other. */
+	private validateCustomToolNames(
+		tools: ToolDef[],
+		builtinTools: AgentTool<any>[],
+	): void {
+		const reserved = new Set<string>(builtinTools.map((t) => t.name));
+		reserved.add('task');
 		const names = new Set<string>();
 		for (const toolDef of tools) {
-			if (BUILTIN_TOOL_NAMES.has(toolDef.name)) {
+			if (reserved.has(toolDef.name)) {
 				throw new Error(
 					`[flue] Custom tool "${toolDef.name}" conflicts with a built-in tool. ` +
-						`Built-in tools: ${[...BUILTIN_TOOL_NAMES].join(', ')}`,
+						`Built-in tools: ${[...reserved].join(', ')}`,
 				);
 			}
 			if (names.has(toolDef.name)) {
@@ -880,6 +894,7 @@ export class Session implements FlueSession {
 		}
 	}
 
+	/** Build built-in tools from the connector or the framework defaults. */
 	private createBuiltinTools(
 		env: SessionEnv,
 		tools: ToolDef[],
@@ -887,18 +902,45 @@ export class Session implements FlueSession {
 		model?: string,
 		thinkingLevel?: ThinkingLevel,
 	): AgentTool<any>[] {
+		const runTask = (params: TaskToolParams, signal?: AbortSignal) =>
+			this.runTaskForTool(params, tools, role, model, thinkingLevel, signal);
+
+		if (this.toolFactory) {
+			const connectorTools = this.toolFactory(env, { roles: this.config.roles });
+			this.validateConnectorTools(connectorTools);
+			return [...connectorTools, createTaskTool(runTask, this.config.roles)];
+		}
+
 		return createTools(env, {
 			roles: this.config.roles,
-			task: (params, signal) =>
-				this.runTaskForTool(params, tools, role, model, thinkingLevel, signal),
+			task: runTask,
 		});
+	}
+
+	/** Validate connector tool names before handing them to the agent loop. */
+	private validateConnectorTools(tools: AgentTool<any>[]): void {
+		const names = new Set<string>();
+		for (const tool of tools) {
+			if (tool.name === 'task') {
+				throw new Error(
+					'[flue] Sandbox connector tools() returned a tool named "task", which is ' +
+						'framework-reserved. The framework appends `task` automatically; remove it from the connector.',
+				);
+			}
+			if (names.has(tool.name)) {
+				throw new Error(
+					`[flue] Sandbox connector tools() returned duplicate tool name "${tool.name}". ` +
+						'Connector tool names must be unique.',
+				);
+			}
+			names.add(tool.name);
+		}
 	}
 
 	private async withScopedRuntime<T>(
 		options: RuntimeScopeOptions,
 		fn: (ctx: { resolvedModel: Model<any> }) => Promise<T>,
 	): Promise<T> {
-		const customTools = this.createCustomTools([...this.agentTools, ...options.tools]);
 		const previousTools = this.harness.state.tools;
 		const previousModel = this.harness.state.model;
 		const previousSystemPrompt = this.harness.state.systemPrompt;
@@ -911,14 +953,19 @@ export class Session implements FlueSession {
 			options.thinkingLevel,
 			options.role,
 		);
+		const builtinTools = this.createBuiltinTools(
+			this.env,
+			options.tools,
+			options.role,
+			options.model,
+			options.thinkingLevel,
+		);
+		const customTools = this.createCustomTools(
+			[...this.agentTools, ...options.tools],
+			builtinTools,
+		);
 		this.harness.state.tools = [
-			...this.createBuiltinTools(
-				this.env,
-				options.tools,
-				options.role,
-				options.model,
-				options.thinkingLevel,
-			),
+			...builtinTools,
 			...customTools,
 			...(options.extraTools ?? []),
 		];

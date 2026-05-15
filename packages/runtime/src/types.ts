@@ -1,4 +1,4 @@
-import type { AgentMessage, ThinkingLevel } from '@earendil-works/pi-agent-core';
+import type { AgentMessage, AgentTool, ThinkingLevel } from '@earendil-works/pi-agent-core';
 import type { ImageContent, Model, TSchema } from '@earendil-works/pi-ai';
 import type * as v from 'valibot';
 
@@ -684,9 +684,22 @@ export interface ShellResult {
 
 // ─── Sandbox ────────────────────────────────────────────────────────────────
 
+export interface SessionToolFactoryOptions {
+	/** Roles available on the agent. */
+	roles: Record<string, Role>;
+}
+
+/** Connector-supplied model-facing tools. Flue appends `task` separately. */
+export type SessionToolFactory = (
+	env: SessionEnv,
+	options: SessionToolFactoryOptions,
+) => AgentTool<any>[];
+
 /** Wraps external sandboxes (Daytona, CF Containers, etc.) into Flue's SessionEnv. */
 export interface SandboxFactory {
 	createSessionEnv(options: { id: string; cwd?: string }): Promise<SessionEnv>;
+	/** Replaces the framework default tool list for this sandbox. */
+	tools?: SessionToolFactory;
 }
 
 /**
