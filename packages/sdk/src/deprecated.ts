@@ -80,9 +80,7 @@ export {
 // be observed at runtime, but after link-time symbol resolution has already
 // succeeded.
 throw new Error(
-	'[@flue/sdk] This subpath has moved. The package previously published at "@flue/sdk" was renamed: ' +
-		'runtime APIs now live in "@flue/runtime" (e.g. "@flue/sdk/client", "@flue/sdk/sandbox", "@flue/sdk/app", ' +
-		'"@flue/sdk/node", "@flue/sdk/cloudflare", "@flue/sdk/internal" → "@flue/runtime"), and ' +
-		'build/config helpers moved to "@flue/cli" (e.g. "@flue/sdk/config" → "@flue/cli/config"). ' +
-		'See the changelog: https://github.com/withastro/flue/blob/main/CHANGELOG.md',
+	'[@flue/sdk] This legacy subpath is no longer supported because the old runtime package moved. ' +
+		'Write runtime imports from "@flue/runtime" instead, for example `import type { ActionContext } from "@flue/runtime"`; ' +
+		'write config imports as `import { defineConfig } from "@flue/cli/config"`.',
 );

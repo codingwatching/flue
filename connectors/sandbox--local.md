@@ -224,12 +224,12 @@ commands.
 ## Wiring it into an agent
 
 ```ts
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import { local } from '../connectors/local';
 
 export const triggers = { webhook: true };
 
-export default async function ({ init }: FlueContext) {
+export default async function ({ init }: ActionContext) {
   const harness = await init({
     sandbox: local(),
     model: 'anthropic/claude-sonnet-4-6',

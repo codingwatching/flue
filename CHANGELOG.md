@@ -2,21 +2,21 @@
 
 ## Unreleased
 
-### New Features
+### Release Shape
 
-- **Cloudflare shell sandbox connector.** `flue add cloudflare-shell` now installs the `getShellSandbox({ workspace, loader })`, `getDefaultWorkspace()`, and `hydrateFromBucket()` connector file. The connector wires `@cloudflare/shell` Workspaces into Flue through a codemode `code` tool backed by a Worker Loader binding.
-- **Local host sandbox connector.** `flue add local` now installs the host-bound `local()` sandbox factory for Node targets, including the explicit env allowlist behavior that keeps host secrets out of shell commands unless the agent author opts in.
-- **Agents, tools, and skills are values.** `defineAgent()` and `defineTool()` establish the new agent-as-value authoring model. `init({ agent })` invokes a definition, `session.skill(skillValue)` runs bundled skill values, and declared subagents can be delegated through `session.task({ agent })` or the built-in task tool.
-- **Tagged markdown bundling.** The CLI now inlines `SKILL.md` imports tagged with `with { type: 'skill' }` and prose imports tagged with `with { type: 'text' }` before Node or Wrangler bundling. Skill support files are bundled into `resources`; large single resources warn at build time.
-- **Action handler layout.** Flue now scans `actions/` or `.flue/actions/` for trigger handlers, leaving `agents/`, `skills/`, and `tools/` as optional project organization conventions.
+- **Agents, tools, and skills are values.** `defineAgent()` and `defineTool()` establish the day-1 authoring model: `init({ agent })` invokes a reusable definition, imported `SKILL.md` values run through `session.skill(skillValue)`, and declared subagents delegate through `session.task(..., { agent })` or the built-in task tool. See `examples/hello-world/.flue/actions/simple-agent.ts`, `bundled-tools.ts`, `with-skill.ts`, and `child-session.ts`.
+- **Action handlers live in `actions/`.** Flue scans `actions/` or `.flue/actions/` only; `agents/`, `skills/`, `tools/`, and connectors are import-driven organizational conventions. The old handler layout fails loudly in the CLI. Cloudflare Durable Object class names remain basename-derived, so the directory rename preserves durable storage identity.
+- **Sandbox discovery is explicit.** Sandboxes no longer auto-load repo context. Use bundled skills by default; opt into sandbox `AGENTS.md` / `CLAUDE.md` and `.agents/skills/` with `loadFromSandbox: true` or explicit object paths. See `examples/hello-world/.flue/actions/load-from-sandbox.ts` and the restored Cloudflare R2/git examples.
+- **Connector-installed sandboxes replace runtime helpers.** `flue add local` installs the host-bound Node connector and `flue add cloudflare-shell` installs Workspace helpers including `getShellSandbox()` and `hydrateFromBucket()`. Removed runtime imports now throw actionable replacement-code errors.
 
 ### Breaking Changes
 
-- **Sandbox factories moved out of `@flue/runtime`.** Replace `import { local } from '@flue/runtime/node'` with a project-local connector installed by `flue add local`. Replace `getShellSandbox`, `getDefaultWorkspace`, and `hydrateFromBucket` imports from `@flue/runtime/cloudflare` with the connector installed by `flue add cloudflare-shell`.
-- **Built-in tool constructors are no longer root exports.** `createTools` and `BUILTIN_TOOL_NAMES` were internal runtime plumbing rather than supported authoring APIs, so they are no longer re-exported from `@flue/runtime`.
-- **Instructions and roles moved to agent definitions.** `init({ instructions })` now errors with a `defineAgent()` migration message. Roles are removed from runtime APIs; use explicit subagents and `task({ agent })` delegation instead. `FlueContext` remains as a deprecated type alias for `ActionContext` for one minor version.
-- **Automatic sandbox skill/context discovery is paused.** Phase 1 no longer discovers sandbox `AGENTS.md` or `.agents/skills/` during init. The opt-in `loadFromSandbox` replacement arrives in Phase 3.
-- **Handler files moved to `actions/`.** Rename `agents/<name>.ts` to `actions/<name>.ts`, or `.flue/agents/<name>.ts` to `.flue/actions/<name>.ts`. Cloudflare Durable Object class names remain basename-derived, so this directory rename preserves existing durable storage identity.
+- **Move action handlers from `agents/` to `actions/`.** Rename `agents/<name>.ts` to `actions/<name>.ts`, or `.flue/agents/<name>.ts` to `.flue/actions/<name>.ts`; the CLI migration error names stale handler files when it detects the old layout.
+- **Replace `init({ instructions })` and roles with agent definitions.** Put instructions on `defineAgent({ instructions })`, use `subagents: [...]`, and delegate with `session.task("...", { agent })`; removed surfaces now throw replacement-code diagnostics.
+- **Replace implicit sandbox discovery with `loadFromSandbox`.** Bundled skills remain the default shipping path; actions that intentionally consume hydrated or checked-out sandbox context must opt in explicitly.
+- **Move sandbox factories out of `@flue/runtime`.** Replace `@flue/runtime/node` local imports with the file generated by `flue add local`; replace Cloudflare shell imports from `@flue/runtime/cloudflare` with the file generated by `flue add cloudflare-shell`.
+- **Internal runtime exports are no longer public authoring APIs.** Built-in tool constructors such as `createTools` and `BUILTIN_TOOL_NAMES` are no longer root exports.
+- **`FlueContext` is deprecated.** Use `ActionContext`; `FlueContext` remains a type alias for one future minor-version migration window before removal.
 
 ## 0.7.0 - 2026-05-18
 

@@ -1,5 +1,12 @@
 import type { ToolDefinition, ToolParameters } from './types.ts';
 
+/**
+ * Define a typed tool value for an agent or a single prompt/skill/task call.
+ *
+ * @example
+ * const lookup = defineTool({ name: 'lookup', description: 'Find a record.', parameters, execute });
+ * const agent = defineAgent({ name: 'assistant', tools: [lookup] });
+ */
 export function defineTool<TParams extends ToolParameters>(
 	tool: ToolDefinition<TParams>,
 ): ToolDefinition<TParams> {

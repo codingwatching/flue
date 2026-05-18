@@ -2,30 +2,25 @@ export interface VirtualSandboxOptions {
 	prefix?: string;
 }
 
-const CLOUDFLARE_SHELL_MIGRATION_DOC = 'docs/cloudflare-shell.md';
-
 export function getVirtualSandbox(): never;
 export function getVirtualSandbox(bucket: unknown, options?: VirtualSandboxOptions): never;
 export function getVirtualSandbox(bucket?: unknown, _options?: VirtualSandboxOptions): never {
 	if (bucket === undefined) {
 		throw new Error(
-			'[flue] getVirtualSandbox() has been removed. Flue\'s default in-memory sandbox is already ' +
-				'what you wanted — omit the `sandbox` option from init() (or pass `false`) and you get it. ' +
-				`See ${CLOUDFLARE_SHELL_MIGRATION_DOC} for the full migration story.`,
+			'[flue] getVirtualSandbox() has been removed because Flue already creates the default in-memory sandbox. ' +
+				'Write `await init({ model: "provider/model" })` or pass `sandbox: false` instead.',
 		);
 	}
 	throw new Error(
-		'[flue] getVirtualSandbox(bucket) has been removed. Its "mount the R2 bucket as the agent ' +
-			'filesystem" framing was never accurate. Install the Cloudflare Shell connector with ' +
-			'`flue add cloudflare-shell`, then use its `hydrateFromBucket()` helper before `init()`. ' +
-			`See ${CLOUDFLARE_SHELL_MIGRATION_DOC}.`,
+		'[flue] getVirtualSandbox(bucket) has been removed because R2 is not a live mounted agent filesystem. ' +
+			'Run `flue add cloudflare-shell`, import `getShellSandbox` and `hydrateFromBucket` from your generated `connectors/cloudflare-shell` file, hydrate the workspace, then pass `sandbox: getShellSandbox(...)` to init().',
 	);
 }
 
 export function hydrateFromBucket(..._args: unknown[]): never {
 	throw new Error(
-		'[flue] hydrateFromBucket() has moved into the Cloudflare Shell connector. ' +
-			'Install it with `flue add cloudflare-shell`, then import `hydrateFromBucket` from your project-local connector file.',
+		'[flue] hydrateFromBucket() is no longer exported from @flue/runtime/cloudflare because hydration belongs to the Cloudflare Shell connector. ' +
+			'Run `flue add cloudflare-shell`, then write `import { hydrateFromBucket } from "../connectors/cloudflare-shell"`.',
 	);
 }
 

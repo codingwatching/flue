@@ -22,6 +22,14 @@ export interface McpServerConnection {
 	close(): Promise<void>;
 }
 
+/**
+ * Connect to a remote MCP server and expose its tools as Flue tool definitions.
+ * Close the returned connection when the action finishes.
+ *
+ * @example
+ * const github = await connectMcpServer('github', { url, headers });
+ * const harness = await init({ model: 'anthropic/claude-sonnet-4-6', tools: github.tools });
+ */
 export async function connectMcpServer(
 	name: string,
 	options: McpServerOptions,

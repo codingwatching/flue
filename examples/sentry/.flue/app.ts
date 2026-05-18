@@ -70,7 +70,7 @@
  */
 
 import { flue, observe } from '@flue/runtime/app';
-import type { FlueContext, FlueEvent } from '@flue/runtime';
+import type { ActionContext, FlueEvent } from '@flue/runtime';
 import * as Sentry from '@sentry/node';
 import { Hono } from 'hono';
 
@@ -199,7 +199,7 @@ observe((event, ctx) => {
  */
 function flueCorrelationTags(
 	event: FlueEvent,
-	ctx: FlueContext,
+	ctx: ActionContext,
 ): Record<string, string> {
 	const tags: Record<string, string> = {
 		'flue.instance_id': ctx.id,

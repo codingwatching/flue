@@ -324,7 +324,7 @@ or tokens; the user authenticates through their existing Wrangler setup.
 ## Wiring it into an agent
 
 ```ts
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import { getDefaultWorkspace, getShellSandbox } from '../connectors/cloudflare-shell';
 
 export const triggers = { webhook: true };
@@ -333,7 +333,7 @@ interface Env {
   LOADER: WorkerLoader;
 }
 
-export default async function ({ init, env }: FlueContext<unknown, Env>) {
+export default async function ({ init, env }: ActionContext<unknown, Env>) {
   const workspace = getDefaultWorkspace();
   const harness = await init({
     sandbox: getShellSandbox({ workspace, loader: env.LOADER }),
@@ -350,7 +350,7 @@ If the user wants bucket contents copied into the Workspace before the agent
 runs, use the `hydrateFromBucket()` helper that this connector file exports:
 
 ```ts
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import {
   getDefaultWorkspace,
   getShellSandbox,
@@ -364,7 +364,7 @@ interface Env {
   LOADER: WorkerLoader;
 }
 
-export default async function ({ init, env }: FlueContext<unknown, Env>) {
+export default async function ({ init, env }: ActionContext<unknown, Env>) {
   const workspace = getDefaultWorkspace();
   if (!(await workspace.exists('/.hydrated'))) {
     await hydrateFromBucket(workspace, env.KNOWLEDGE_BASE);

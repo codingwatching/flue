@@ -90,7 +90,7 @@ Examples (run from the `examples/hello-world/` directory so the `./.flue/` sourc
 ```
 cd examples/hello-world
 node ../../packages/cli/bin/flue.mjs run hello --target node --id test-1
-node ../../packages/cli/bin/flue.mjs run with-role --target node --id test-2 --payload '{"name": "Fred"}'
+node ../../packages/cli/bin/flue.mjs run simple-agent --target node --id test-2 --payload '{"prompt": "Describe Flue briefly."}'
 ```
 
 This builds the project, starts a temporary server, invokes the agent via SSE, streams output to stderr, prints the final result to stdout, and shuts down.
@@ -122,4 +122,4 @@ init({ model: 'cloudflare/@cf/moonshotai/kimi-k2.6' })
 
 ### Agent = Deployed Workspace
 
-A repo is built and deployed as an agent. `flue build` compiles the root (skills, roles, agents, context) into a self-contained server artifact. On every push to main, the agent is rebuilt and redeployed.
+A repo is built and deployed as an agent workspace. `flue build` compiles action handlers plus imported agent definitions, skills, tools, and supporting modules into a self-contained server artifact. On every push to main, the artifact can be rebuilt and redeployed.

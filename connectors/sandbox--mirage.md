@@ -359,13 +359,13 @@ into, you can finish that work by wiring the connector into it. Otherwise,
 share this snippet so they can wire it up themselves.
 
 ```ts
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import { Workspace, RAMResource, MountMode } from '@struktoai/mirage-node';
 import { mirage } from '../connectors/mirage'; // adjust path to match the user's layout
 
 export const triggers = { webhook: true };
 
-export default async function ({ init }: FlueContext) {
+export default async function ({ init }: ActionContext) {
   const ws = new Workspace({ '/data': new RAMResource() }, { mode: MountMode.WRITE });
 
   const harness = await init({

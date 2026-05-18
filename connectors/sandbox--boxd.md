@@ -284,13 +284,13 @@ into, you can finish that work by wiring the connector into it. Otherwise,
 share this snippet so they can wire it up themselves.
 
 ```ts
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import { Compute } from '@boxd-sh/sdk';
 import { boxd } from '../connectors/boxd'; // adjust path to match the user's layout
 
 export const triggers = { webhook: true };
 
-export default async function ({ init, env }: FlueContext) {
+export default async function ({ init, env }: ActionContext) {
   const client = new Compute({ apiKey: env.BOXD_API_KEY });
   const box = await client.box.create({ name: `agent-${Date.now()}` });
 

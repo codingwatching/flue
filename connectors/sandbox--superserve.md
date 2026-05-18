@@ -300,13 +300,13 @@ into, you can finish that work by wiring the connector into it. Otherwise,
 share this snippet so they can wire it up themselves.
 
 ```ts
-import type { FlueContext } from '@flue/sdk/client';
+import type { ActionContext } from '@flue/runtime';
 import { Sandbox } from '@superserve/sdk';
 import { superserve } from '../connectors/superserve'; // adjust path to match the user's layout
 
 export const triggers = { webhook: true };
 
-export default async function ({ init }: FlueContext) {
+export default async function ({ init }: ActionContext) {
   // The Superserve SDK reads SUPERSERVE_API_KEY from the environment
   // automatically; pass `apiKey` explicitly only if you keep it elsewhere.
   const sandbox = await Sandbox.create({ name: `agent-${Date.now()}` });

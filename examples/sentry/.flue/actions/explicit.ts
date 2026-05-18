@@ -32,11 +32,11 @@
  *   - HTTP 200 with `{ result: { ok: true, ... }, _meta: { runId } }`.
  *   - Two issues in Sentry, both tagged `flue.agent=explicit`.
  */
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 
 export const triggers = { webhook: true };
 
-export default async function explicit(ctx: FlueContext) {
+export default async function explicit(ctx: ActionContext) {
 	// Pretend we tried to call a flaky downstream service and it
 	// threw. We catch the error so the run continues, but we still
 	// want it captured in Sentry as an exception.

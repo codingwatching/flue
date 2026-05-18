@@ -138,7 +138,7 @@ interface InternalTaskResult<T> {
 function assertRolesRemoved(value: unknown): void {
 	if (value && typeof value === 'object' && 'role' in value) {
 		throw new Error(
-			'[flue] Roles have been removed. Define a subagent and delegate via task({ agent }) instead.',
+			'[flue] This call received `role`, but roles have been removed. Define a subagent with `defineAgent({ name: "reviewer" })`, include it in `subagents`, and delegate with `session.task("...", { agent: reviewer })` instead.',
 		);
 	}
 }
@@ -782,7 +782,7 @@ export class Session implements FlueSession {
 		const agent = this.config.subagents[name];
 		if (agent) return agent;
 		const available = Object.keys(this.config.subagents).join(', ') || '(none)';
-		throw new Error(`[flue] Subagent "${name}" is not declared. Available: ${available}.`);
+		throw new Error(`[flue] The task tool requested subagent "${name}", but this agent does not declare it in subagents. Declared subagents: ${available}.`);
 	}
 
 	private resolveTaskAgent(agent: AgentDefinition): AgentDefinition {
@@ -791,8 +791,8 @@ export class Session implements FlueSession {
 		if (declared) return declared;
 		const available = Object.keys(this.config.subagents).join(', ') || '(none)';
 		throw new Error(
-			`[flue] Task agent "${agent.name}" is not declared on this parent agent. ` +
-				`Available: ${available}.`,
+			`[flue] session.task(..., { agent: "${agent.name}" }) received an agent that is not declared on this parent agent. ` +
+				`Add it to defineAgent({ subagents: [childAgent] }) before delegating. Declared subagents: ${available}.`,
 		);
 	}
 
@@ -800,7 +800,7 @@ export class Session implements FlueSession {
 		if (typeof skill !== 'string') {
 			const registered = this.config.skills[skill.name];
 			if (!registered) {
-				throw new Error(`[flue] Skill "${skill.name}" is not registered on this agent.`);
+				throw new Error(`[flue] session.skill(skillValue) received skill "${skill.name}", but that value is not registered on this agent. Add it to defineAgent({ skills: [skillValue] }) or init({ skills: [skillValue] }).`);
 			}
 			if (registered !== skill) {
 				throw new Error(`[flue] Skill "${skill.name}" does not match the value registered on this agent.`);
@@ -814,8 +814,8 @@ export class Session implements FlueSession {
 			? ' If this skill exists in the sandbox, pass loadFromSandbox: true to init().'
 			: '';
 		throw new Error(
-			`[flue] Skill "${skill}" not registered. Available: ${available}. ` +
-				`Import the SKILL.md value into defineAgent({ skills: [...] }).${sandboxHint}`,
+			`[flue] session.skill("${skill}") could not resolve that skill. Registered skills: ${available}. ` +
+				`For bundled skills, import the SKILL.md value and pass it to defineAgent({ skills: [skillValue] }) or init({ skills: [skillValue] }).${sandboxHint}`,
 		);
 	}
 

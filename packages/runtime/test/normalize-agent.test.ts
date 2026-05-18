@@ -54,4 +54,16 @@ describe('normalizeAgentDefinition', () => {
 		const agent = defineAgent({ name: 'triage', model: 'anthropic/test' });
 		expect(normalizeAgentDefinition({ agent, model: false }).model).toBeUndefined();
 	});
+
+	it('explains removed inline instructions and roles', () => {
+		expect(() => normalizeAgentDefinition({ instructions: 'old' } as never)).toThrow('defineAgent');
+		expect(() => normalizeAgentDefinition({ roles: [] } as never)).toThrow('session.task');
+	});
+
+	it('names both resource merge sources for duplicates', () => {
+		const agent = defineAgent({ name: 'triage', skills: [skill] });
+		expect(() => normalizeAgentDefinition({ agent, skills: [skill] })).toThrow(
+			'defineAgent({ skills: [...] }) and init({ skills: [...] })',
+		);
+	});
 });

@@ -2,7 +2,7 @@
 
 Build and deploy Flue agents as a Node.js server. This guide walks you through creating your first agent, running it locally, and deploying it anywhere you can run Node.js — a VPS, Docker, Railway, Fly.io, or any cloud platform.
 
-By the end, you will have a Flue agent running as a Node.js server, and you will know how to add roles, sandbox context, external CLIs, remote sandboxes, and durable session storage when your agent needs them.
+By the end, you will have a Flue agent running as a Node.js server, and you will know how to add agent definitions, bundled skills, subagents, external CLIs, remote sandboxes, and durable session storage when your agent needs them.
 
 ## Project layout
 
@@ -33,12 +33,12 @@ npm install -D @flue/cli
 `.flue/actions/translate.ts`:
 
 ```typescript
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import * as v from 'valibot';
 
 export const triggers = { webhook: true };
 
-export default async function ({ init, payload }: FlueContext) {
+export default async function ({ init, payload }: ActionContext) {
   const harness = await init({ model: 'openai/gpt-5.5' });
   const session = await harness.session();
 
@@ -108,34 +108,31 @@ npx flue run translate --target node --id test-1 --env .env \
   --payload '{"text": "Hello world", "language": "French"}'
 ```
 
-## Roles
+## Subagents
 
-Roles shape agent behavior across prompts. They live alongside your agents — under `./roles/` (or `./.flue/roles/` if you use the `.flue/` layout) — and ship with the deployed server:
-
-`.flue/roles/analyst.md`:
-
-```markdown
----
-description: A data analyst focused on extracting insights
----
-
-You are a data analyst. Focus on quantitative insights, trends, and
-actionable takeaways. Be precise with numbers and cite your sources.
-```
-
-Use a role by passing its name to `prompt()`:
+Use `defineAgent()` for reusable agent definitions, and declare delegated helpers as `subagents` on their parent:
 
 ```typescript
-const analysis = await session.prompt("Analyze this quarter's metrics", {
-  role: 'analyst',
+import { defineAgent } from '@flue/runtime';
+
+const analyst = defineAgent({
+  name: 'analyst',
+  model: 'anthropic/claude-haiku-4-5',
+  instructions: 'Focus on quantitative insights, trends, and actionable takeaways.',
 });
+
+const lead = defineAgent({
+  name: 'lead',
+  model: 'anthropic/claude-sonnet-4-6',
+  subagents: [analyst],
+});
+
+const analysis = await session.task("Analyze this quarter's metrics", { agent: analyst });
 ```
 
-## Sandbox context
+## Bundled skills
 
-The agent reads `AGENTS.md` and skills from its sandbox at runtime. With `local()`, that's your real project root, so any files there are visible. With the default virtual sandbox the filesystem starts empty — you'd set up context via `session.shell()` or skip these features for simple prompt-and-response agents.
-
-**Skills** are reusable agent tasks defined as markdown files in `.agents/skills/`. They give the agent a focused instruction set for a specific job:
+Skills are reusable Agent Skills directories authored alongside your Flue code and bundled into the deployable artifact. This is the default way to ship skills with a Node agent:
 
 `.agents/skills/summarize/SKILL.md`:
 
@@ -149,22 +146,28 @@ Given the text provided in the arguments, produce a concise summary.
 Focus on the key points and keep it to 2-3 sentences.
 ```
 
-**`AGENTS.md`** at the root of the sandbox is the agent's system prompt — it provides global context about the project.
-
-Call a skill from your agent:
+Import the skill value, register it, then run it explicitly:
 
 ```typescript
+import summarize from '../skills/summarize/SKILL.md' with { type: 'skill' };
 import * as v from 'valibot';
 
-const { data } = await session.skill('summarize', {
+const harness = await init({
+  model: 'anthropic/claude-sonnet-4-6',
+  skills: [summarize],
+});
+const session = await harness.session();
+const { data } = await session.skill(summarize, {
   args: { text: document },
   result: v.object({ summary: v.string() }),
 });
 ```
 
+If an action intentionally operates inside a pre-existing repository or hydrated workspace, `loadFromSandbox: true` can separately opt into that sandbox's `AGENTS.md` / `CLAUDE.md` and `.agents/skills/`. That is useful for coding-agent integrations, but it is not required to author normal Flue skills.
+
 ## Using the local sandbox
 
-Install the local connector with `flue add local`. `local()` is where Node really shines compared to other targets. The agent runs directly against the host filesystem and shell — `cwd` is `process.cwd()`, shell commands go through `child_process`, and `AGENTS.md` and skills are discovered from the project root.
+Install the local connector with `flue add local`. `local()` is where Node really shines compared to other targets. The agent runs directly against the host filesystem and shell — `cwd` is `process.cwd()`, shell commands go through `child_process`, and `loadFromSandbox: true` can discover project-root `AGENTS.md` and skills when you want that repo context.
 
 Run flue itself inside an isolation boundary you trust — a CI runner, a container, a sandbox VM. There is no second layer of isolation between the agent and the host.
 
@@ -173,13 +176,13 @@ Env exposure is opt-in. By default only shell essentials (`PATH`, `HOME`, locale
 `.flue/actions/reviewer.ts`:
 
 ```typescript
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import { local } from '../connectors/local';
 import * as v from 'valibot';
 
 export const triggers = { webhook: true };
 
-export default async function ({ init, payload }: FlueContext) {
+export default async function ({ init, payload }: ActionContext) {
   const harness = await init({ sandbox: local(), model: 'anthropic/claude-sonnet-4-6' });
   const session = await harness.session();
 
@@ -187,7 +190,6 @@ export default async function ({ init, payload }: FlueContext) {
     `Review the codebase and identify potential issues in the area
     related to: ${payload.topic}`,
     {
-      role: 'reviewer',
       result: v.object({
         issues: v.array(
           v.object({
@@ -243,7 +245,7 @@ On Node.js, session state is stored in memory by default — sessions persist fo
 For durable sessions, pass a custom store via the `persist` option on `init()`. A store implements three methods — `save()`, `load()`, and `delete()` — each operating on a session ID and a `SessionData` object (message history, metadata, compaction state):
 
 ```typescript
-import type { FlueContext, SessionStore, SessionData } from '@flue/runtime';
+import type { ActionContext, SessionStore, SessionData } from '@flue/runtime';
 import { local } from '../connectors/local';
 
 // Example: a simple file-backed store. In production, use a database.
@@ -259,7 +261,7 @@ const store: SessionStore = {
   },
 };
 
-export default async function ({ init, payload }: FlueContext) {
+export default async function ({ init, payload }: ActionContext) {
   const harness = await init({
     sandbox: local(),
     persist: store,

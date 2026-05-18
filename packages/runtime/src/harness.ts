@@ -70,7 +70,7 @@ export class Harness implements FlueHarness {
 		options?: SessionOptions,
 	): Promise<FlueSession> {
 		if (options && typeof options === 'object' && 'role' in options) {
-			throw new Error('[flue] Roles have been removed. Define a subagent and delegate via task() instead.');
+			throw new Error('[flue] harness.session(..., { role }) is no longer supported because roles have been removed. Define a subagent, include it in `subagents`, and delegate with `session.task("...", { agent: reviewer })` instead.');
 		}
 		const sessionName = normalizeSessionName(name);
 		const open = this.openSessions.get(sessionName);

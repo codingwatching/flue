@@ -1,4 +1,4 @@
-import { type FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import { getSandbox } from '@cloudflare/sandbox';
 
 export const triggers = { webhook: true };
@@ -15,7 +15,7 @@ export const triggers = { webhook: true };
  *   { "message": "Clone cloudflare/workers-sdk and fix the failing tests", "userId": "..." }
  *   { "message": "What version of Node.js is installed?", "userId": "..." }
  */
-export default async function ({ init, id, env, payload }: FlueContext) {
+export default async function ({ init, id, env, payload }: ActionContext) {
 	const sandbox = getSandbox(env.Sandbox, id);
 	const harness = await init({ sandbox, model: 'anthropic/claude-sonnet-4-6' });
 	const session = await harness.session();

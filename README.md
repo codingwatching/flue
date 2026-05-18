@@ -4,405 +4,245 @@
 
 # Flue
 
-Flue is **The Agent Harness Framework.** If you know how to use Claude Code (or Codex, OpenCode, Pi, etc)... then you already know the basics of how to build agents with Flue.
+Flue is **The Agent Harness Framework**: a TypeScript framework for building headless agents that feel like Claude Code, Codex, OpenCode, or Pi, but run as programmable server actions.
 
-Flue is a TypeScript framework for building the next generation of agents, designed around a built-in **agent harness**. It's like Claude Code, but 100% headless and programmable. There's no baked-in assumption like requiring a human operator to function. No TUI. No GUI. Just TypeScript.
+An app has three core pieces:
 
-But using Flue feels like using Claude Code. The agents you build act autonomously to solve problems and complete tasks. They require very little code to run — most of the "logic" lives in Markdown: skills, context, and `AGENTS.md`.
+- **Actions are handlers.** Flue scans `actions/` or `.flue/actions/` and turns each handler into a runnable action.
+- **Agents are values.** Use `defineAgent()` when instructions, tools, skills, or subagents should travel together as an explicit reusable definition.
+- **Harnesses and sessions run work.** An action calls `init()`, opens a session, then uses `prompt()`, `skill()`, `task()`, or `shell()`.
 
-Flue isn't another AI SDK. It's a proper runtime-agnostic framework — think Astro or Next.js, but for agents. Write once, build, and deploy your agents anywhere (Node.js, Cloudflare, GitHub Actions, GitLab CI/CD, etc).
+Skills and tools can be bundled into an agent definition at build time. Sandbox files are different: Flue only reads sandbox `AGENTS.md` / `CLAUDE.md` and `.agents/skills/` when an action explicitly opts into `loadFromSandbox`.
 
 ## Packages
 
-| Package                       | Description                             |
-| ----------------------------- | --------------------------------------- |
-| [`@flue/runtime`](packages/runtime) | Runtime: harness, sessions, tools, sandbox |
-| [`@flue/cli`](packages/cli)   | CLI + build/dev tooling (`flue` binary)    |
+| Package | Description |
+| --- | --- |
+| [`@flue/runtime`](packages/runtime) | Runtime APIs for actions, agents, harnesses, sessions, tools, and sandboxes |
+| [`@flue/cli`](packages/cli) | Build, dev, run, logs, init, add, and config tooling |
 
-## Examples
+## Getting started
 
-### Quickstart
+Install Flue, create a project config, and create an action directory:
 
-The simplest agent — no container, no tools, just a prompt and a typed result.
-
-Unless you opt-in to initializing a full container sandbox, Flue will default to a virtual sandbox for every agent, powered by [just-bash](https://github.com/vercel-labs/just-bash). A virtual sandbox is going to be dramatically faster, cheaper, and more scalable than running a full container for every agent, which makes it perfect for building high-traffic/high-scale agents.
+```bash
+npm install @flue/runtime valibot
+npm install -D @flue/cli
+npx flue init --target node
+mkdir -p actions
+```
 
 ```ts
-// .flue/actions/hello-world.ts
-import type { FlueContext } from '@flue/runtime';
+// actions/hello.ts
+import type { ActionContext } from '@flue/runtime';
 import * as v from 'valibot';
 
-// Every agent needs a trigger. This agent is invoked as an API endpoint, via HTTP.
 export const triggers = { webhook: true };
 
-// The agent handler. Where the orchestration of the agent lives.
-export default async function ({ init, payload }: FlueContext) {
-  // `harness` -- Your initialized harness including sandbox, tools, skills, etc.
+export default async function ({ init, payload }: ActionContext) {
   const harness = await init({ model: 'anthropic/claude-sonnet-4-6' });
   const session = await harness.session();
-
-  // prompt() sends a message in the session, triggering action.
   const { data } = await session.prompt(`Translate this to ${payload.language}: "${payload.text}"`, {
-    // Pass `result` to get typed, schema-validated data back from your agent.
-    result: v.object({
-      translation: v.string(),
-      confidence: v.picklist(['low', 'medium', 'high']),
-    }),
+    result: v.object({ translation: v.string() }),
   });
-
   return data;
 }
 ```
 
-### Support Agent
+Run it locally:
 
-A support agent can also run on Cloudflare without a container by using a cf-shell Workspace. The Workspace is a durable SQLite-indexed filesystem; R2 is an optional hydration source (and large-file spillover), not a live bucket mount. Copy the R2 objects you want into the Workspace before calling `init()`, then the agent operates on that structured filesystem through the `code` tool and `state.*` API.
-
-Because this agent is deployed to Cloudflare, message history and session state are automatically persisted for you. So you (or your customer) can revisit this support session days, weeks, or years later and pick up exactly where you left off.
-
-```ts
-// .flue/actions/support.ts
-import type { FlueContext } from '@flue/runtime';
-import {
-  getDefaultWorkspace,
-  getShellSandbox,
-  hydrateFromBucket,
-} from '../connectors/cloudflare-shell';
-import * as v from 'valibot';
-
-export const triggers = { webhook: true };
-
-export default async function ({ init, payload, env }: FlueContext) {
-  const workspace = getDefaultWorkspace();
-
-  // Hydrate once per agent instance. R2 is a source, not a live mount.
-  if (!(await workspace.exists('/.hydrated'))) {
-    await hydrateFromBucket(workspace, env.KNOWLEDGE_BASE);
-    await workspace.writeFile('/.hydrated', new Date().toISOString());
-  }
-
-  const harness = await init({
-    sandbox: getShellSandbox({ workspace, loader: env.LOADER }),
-    model: 'openrouter/moonshotai/kimi-k2.6',
-  });
-  const session = await harness.session();
-
-  return await session.prompt(
-    `You are a support agent. Use the code tool to search the hydrated
-    workspace for articles relevant to this request, then write a helpful response.
-
-    Customer: ${payload.message}`,
-    {
-      // Provide roles (aka subagents) to guide your agent. Defined in .flue/roles/
-      role: 'triager',
-    },
-  );
-}
+```bash
+ANTHROPIC_API_KEY=... npx flue dev --target node
+curl http://localhost:3583/agents/hello/demo \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Hello world","language":"French"}'
 ```
 
-This requires a `worker_loaders` binding (`{ "worker_loaders": [{ "binding": "LOADER" }] }`) in your `wrangler.jsonc`. If you need true bucket-keys-as-filesystem-paths semantics or Linux shell commands, use `@cloudflare/sandbox` Containers with `mountBucket` instead. See [Cloudflare Shell Sandbox](https://github.com/withastro/flue/blob/main/docs/cloudflare-shell.md) for the full migration and trade-offs.
+## Project layout
 
-### Issue Triage (CI)
+Flue scans exactly one directory for handlers:
 
-A triage agent that runs in CI whenever an issue is opened on GitHub. The `local()` sandbox gives the agent direct access to the host filesystem and shell — perfect for CI runners, where `gh`, `git`, and `npm` are already on `$PATH` and the runner itself is your isolation boundary.
-
-```ts
-// .flue/actions/triage.ts
-import { type FlueContext } from '@flue/runtime';
-import { local } from '../connectors/local';
-import * as v from 'valibot';
-
-// Because we are running this in CI, we don't need to expose this as an HTTP endpoint.
-// The CLI can run any agent from the command line, `flue run triage ...`
-export const triggers = {};
-
-export default async function ({ init, payload }: FlueContext) {
-  // `local()` gives the agent direct access to the host filesystem and
-  // shell. The agent's bash tool can run `gh`, `git`, `npm` directly.
-  // Skills and AGENTS.md are discovered from process.cwd().
-  //
-  // Only a small allowlist of shell-essential env vars (PATH, HOME,
-  // locale, etc.) is inherited from process.env by default. Pass
-  // `env: { GH_TOKEN: process.env.GH_TOKEN }` to expose more.
-  //
-  // `model` sets the default model for every prompt/skill call in this
-  // agent. Override per-call with `{ model: '...' }` on prompt()/skill().
-  const harness = await init({
-    sandbox: local({
-      env: { GH_TOKEN: process.env.GH_TOKEN },
-    }),
-    model: 'anthropic/claude-opus-4-7',
-  });
-  const session = await harness.session();
-
-  // Skills can be referenced either by their frontmatter `name:` (shown below)
-  // or by a relative path under `.agents/skills/` — e.g.
-  // `session.skill('triage/reproduce.md', ...)`. Path references are handy for
-  // skill packs that group multiple stages under one directory.
-  const { data } = await session.skill('triage', {
-    // Pass arguments to any prompt or skill.
-    args: { issueNumber: payload.issueNumber },
-    // Result schemas are great for being able to act/orchestrate based on
-    // the structured `data` returned from your prompt or skill call.
-    result: v.object({
-      severity: v.picklist(['low', 'medium', 'high', 'critical']),
-      reproducible: v.boolean(),
-      summary: v.string(),
-      fix_applied: v.boolean(),
-    }),
-  });
-
-  return data;
-}
+```txt
+actions/            # bare layout
+.flue/actions/      # source layout when .flue/ exists
 ```
 
-### Coding Agent (Remote Sandbox)
+If `.flue/` exists, Flue reads `.flue/actions/` and ignores bare `actions/`. Every other folder is convention only: `agents/`, `tools/`, `skills/`, and `connectors/` may live wherever your imports point.
 
-The examples above all run on a lightweight virtual sandbox — no container needed. But for a full coding agent, you want a real Linux environment with git, Node.js, a browser, and a cloned repo ready to go.
+## Agents as values
 
-Daytona's declarative image builder lets you define the environment in code. The image is cached after the first build, so subsequent sessions start instantly.
-
-Install the Daytona connector with `flue add daytona | <your-agent>` (e.g. `claude`, `opencode`, `codex`, `cursor-agent`). It writes a small `connectors/daytona.ts` adapter into your project that you import directly.
+Inline `init({ model })` is the simplest path. Use `defineAgent()` when the definition should be named, reusable, or carry bundled behavior.
 
 ```ts
-// .flue/actions/code.ts
-import { Type, type FlueContext, type ToolDef } from '@flue/runtime';
-import { Daytona } from '@daytona/sdk';
-import { daytona } from '../connectors/daytona';
+import { defineAgent, type ActionContext } from '@flue/runtime';
 
-export const triggers = { webhook: true };
+const reviewer = defineAgent({
+  name: 'reviewer',
+  model: 'anthropic/claude-sonnet-4-6',
+  instructions: 'Review the request carefully and answer concisely.',
+});
 
-export default async function ({ init, payload, env }: FlueContext) {
-  // Each agent gets a real container via Daytona. The container has
-  // a full Linux environment with persistent filesystem and shell.
-  //
-  // For simplicity, we always create a new sandbox here. You could also
-  // first check for an existing sandbox for the agent instance id, and reuse that
-  // instead to best pick up where you last left off in the conversation.
-  const client = new Daytona({ apiKey: env.DAYTONA_API_KEY });
-  const sandbox = await client.create();
-  const setupHarness = await init({
-    sandbox: daytona(sandbox),
-    model: 'openai/gpt-5.5',
-  });
-  const setup = await setupHarness.session();
-
-  // For simplicity, we clone the target repo into the sandbox here.
-  // You could also bake these into the container image snapshot for a
-  // faster / near-instant startup.
-  await setup.shell(`git clone ${payload.repo} /workspace/project`);
-  await setup.shell('npm install', { cwd: '/workspace/project' });
-
-  // Start a second harness in the cloned repo. It shares the same sandbox, but
-  // discovers AGENTS.md and skills from /workspace/project.
-  const projectHarness = await init({
-    name: 'project',
-    sandbox: daytona(sandbox),
-    cwd: '/workspace/project',
-    model: 'openai/gpt-5.5',
-  });
-  const session = await projectHarness.session();
-
-  // Coding agents don't hide the agent DX from the user, so no need to
-  // wrap the user's prompt in anything. Just send it to the agent directly
-  // and then stream back the progress and final results.
+export default async function ({ init, payload }: ActionContext) {
+  const harness = await init({ agent: reviewer });
+  const session = await harness.session();
   return await session.prompt(payload.prompt);
 }
 ```
 
-### Remote MCP Tools
+## Bundled tools
 
-MCP is available as a runtime tool adapter. Connect to a remote MCP server in trusted code, pass its tools to `init()`, and keep secrets in `env` instead of filesystem context or prompts.
+`defineTool()` creates tool values. Put them on an agent to make them available to every call in its sessions, or pass them to an individual prompt for call-scoped access.
 
 ```ts
-// .flue/actions/assistant.ts
-import { connectMcpServer, type FlueContext } from '@flue/runtime';
+import { Type, defineAgent, defineTool } from '@flue/runtime';
 
-export const triggers = { webhook: true };
+const uppercase = defineTool({
+  name: 'uppercase',
+  description: 'Convert text to uppercase.',
+  parameters: Type.Object({ text: Type.String() }),
+  execute: async (args) => String(args.text).toUpperCase(),
+});
 
-export default async function ({ init, payload, env }: FlueContext) {
-  const github = await connectMcpServer('github', {
-    url: 'https://mcp.github.com/mcp',
-    headers: {
-      Authorization: `Bearer ${env.GITHUB_TOKEN}`,
-    },
-  });
-
-  try {
-    const harness = await init({
-      model: 'anthropic/claude-sonnet-4-6',
-      tools: github.tools,
-    });
-    const session = await harness.session();
-    return await session.prompt(payload.prompt);
-  } finally {
-    await github.close();
-  }
-}
+const agent = defineAgent({
+  name: 'editor',
+  model: 'anthropic/claude-sonnet-4-6',
+  tools: [uppercase],
+});
 ```
 
-`connectMcpServer()` defaults to modern streamable HTTP. For legacy SSE servers, pass `transport: 'sse'`. Flue does not auto-detect transports, spawn local stdio MCP servers, or handle OAuth callbacks in this first version.
+## Bundled skills
 
-## Agents, Harnesses, And Sessions
-
-An action is the source file in `actions/<name>.ts`; it exposes an agent route when it declares a webhook trigger. For HTTP agents, the URL `<id>` segment identifies the agent instance: the durable runtime scope for one customer, repo, conversation space, or other caller-defined boundary.
+Skills are spec-compliant directories with `SKILL.md` at the root:
 
 ```txt
-POST /agents/<agent-name>/<id>
+.agents/skills/summarize/
+  SKILL.md
+  references/
+  scripts/
+  assets/
 ```
 
-Inside a run, `init()` creates a harness: a configured handle for model defaults, tools, sandbox, filesystem, and sessions. The default harness is named `"default"`; pass `init({ name })` when one run needs multiple isolated harness scopes.
+```md
+---
+name: summarize
+description: Summarize supplied text.
+---
 
-By default, `harness.session()` opens the default session inside the default harness for that agent instance. Reuse the same URL `<id>` to continue the same agent instance. Use a new URL `<id>` to start fresh.
-
-```bash
-# Start a conversation (port 3583 is `flue dev`'s default)
-curl http://localhost:3583/agents/hello/session-abc \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Alice"}'
-
-# Continue that conversation
-curl http://localhost:3583/agents/hello/session-abc \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Alice"}'
-
-# Start a separate conversation
-curl http://localhost:3583/agents/hello/session-xyz \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Alice"}'
+Return a concise summary of the provided material.
 ```
 
-Agent instances own sandbox state such as files written during a run. Harnesses group related session state within an instance. Sessions persist message history and conversation metadata inside a harness. On Cloudflare, session data is backed by Durable Objects and survives across requests. On Node.js, sessions are stored in memory by default unless you provide a custom store.
-
-In production, generate a stable URL `<id>` for the agent instance you want to preserve. Use `harness.session(threadName)` when you need multiple conversations inside the same harness.
-
-### Tasks
-
-Use `session.task()` to run a focused, one-shot child agent in a detached session. Tasks share the same sandbox/filesystem, but get their own message history and discover `AGENTS.md` plus `.agents/skills/` from their working directory. The same `task` tool is also available to the LLM during `prompt()` and `skill()` calls, so the agent can delegate parallel research or exploration work itself.
+Import a skill with the `skill` import attribute and attach it to an agent:
 
 ```ts
-const session = await harness.session();
+import { defineAgent } from '@flue/runtime';
+import summarize from '../.agents/skills/summarize/SKILL.md' with { type: 'skill' };
 
-const research = await session.task('Research the auth flow and summarize the key files.', {
-  cwd: '/workspace/project',
-  role: 'researcher',
+const agent = defineAgent({
+  name: 'summarizer',
+  model: 'anthropic/claude-sonnet-4-6',
+  skills: [summarize],
 });
 
-const answer = await session.prompt(
-  `Use this research to draft the implementation plan:\n\n${research.text}`,
-);
+const result = await session.skill(summarize, { args: { text } });
 ```
 
-Roles can be set at the harness, session, or call level. Precedence is `call role > session role > harness role`. Role instructions are applied as call-scoped system prompt overlays, not injected into the persisted user message history.
+The value form is ideal for bundled skills. String names remain supported, especially for sandbox-discovered skills.
+
+## Subagents and tasks
+
+Declare subagents directly on the parent agent. Programmatic delegation uses `session.task(..., { agent })`; agents with declared subagents also receive a model-facing `task` tool.
 
 ```ts
-const harness = await init({ model: 'anthropic/claude-sonnet-4-6', role: 'coder' });
-const session = await harness.session('review-thread', { role: 'reviewer' });
+const researcher = defineAgent({
+  name: 'researcher',
+  model: 'anthropic/claude-haiku-4-5',
+  instructions: 'Return concise findings.',
+});
 
-await session.prompt('Review the latest changes.'); // uses reviewer
-await session.task('Research related issues.', { role: 'researcher' }); // uses researcher
+const lead = defineAgent({
+  name: 'lead',
+  model: 'anthropic/claude-sonnet-4-6',
+  subagents: [researcher],
+});
+
+const result = await session.task('Investigate this issue.', { agent: researcher });
 ```
 
-### Provider Settings
+## Sandbox context and runtime-discovered skills
 
-Use `providers` when model traffic needs provider-specific runtime settings,
-such as an enterprise API gateway, provider-compatible proxy, custom endpoint,
-or gateway-specific credentials. This is common for managed credentials, audit
-logging, traffic routing, or self-hosted OpenAI-compatible providers.
-
-Configure these settings in `app.ts` instead of mutating global model state. They
-apply to every harness and session that resolves models through that provider.
+By default, Flue does not read context or skills from the sandbox. Opt in when an action operates inside a repo or hydrated workspace:
 
 ```ts
-// .flue/app.ts
-import { configureProvider, flue } from '@flue/runtime/app';
-
-export default {
-  fetch(req, env, ctx) {
-    configureProvider('anthropic', {
-      baseUrl: env.ANTHROPIC_BASE_URL,
-      headers: { 'X-Custom-Auth': env.GATEWAY_KEY },
-      // Use this when the proxy expects a synthetic or gateway-specific key.
-      apiKey: 'dummy',
-    });
-
-    return flue().fetch(req, env, ctx);
-  },
-};
+const harness = await init({
+  agent,
+  sandbox,
+  cwd: '/workspace/project',
+  loadFromSandbox: true,
+});
 ```
 
-### Custom Virtual Sandboxes
+`true` reads conventional locations under `cwd`:
 
-For most agents, use the built-in virtual sandbox or `sandbox: local()` (Node target only). If you need to customize just-bash directly, pass a Bash factory. The factory must return a fresh Bash-like runtime each time; share the filesystem object in the closure to persist files across sessions and prompts.
+- `AGENTS.md`, falling back to `CLAUDE.md`
+- `.agents/skills/*/SKILL.md`
+
+Explicit path mode is selective. Each object field enables only that branch:
 
 ```ts
-import { Bash, InMemoryFs } from 'just-bash';
+loadFromSandbox: { skills: '/repo/.agents/skills' }
+loadFromSandbox: { context: '/repo/AGENTS.md' }
+loadFromSandbox: { skills: '/repo/.agents/skills', context: '/repo/AGENTS.md' }
+```
 
-const fs = new InMemoryFs();
+Inline `init({ context: '...' })` adds invocation-specific workspace markdown after agent instructions.
+
+## Sandboxes
+
+Without `sandbox`, Flue uses a fast in-memory sandbox. For host or remote execution, install connector guidance with `flue add` and import the project-local connector file it describes.
+
+```bash
+flue add local --print
+flue add daytona --print
+flue add cloudflare-shell --print
+```
+
+For example, a Node CI action can pass the generated local connector factory:
+
+```ts
+import { local } from '../connectors/local';
 
 const harness = await init({
-  sandbox: () => new Bash({ fs, cwd: '/workspace', python: true }),
   model: 'anthropic/claude-sonnet-4-6',
+  sandbox: local({ env: { GH_TOKEN: process.env.GH_TOKEN } }),
+  loadFromSandbox: true,
 });
-const session = await harness.session();
 ```
 
-## Connectors
-
-Connectors adapt third-party services (sandbox providers, etc.) into Flue. They are not an npm package — they are markdown installation instructions hosted at `https://flueframework.com/cli/connectors/` and applied to your project by your AI coding agent.
+## CLI
 
 ```bash
-flue add                                            # list available connectors
-flue add daytona | claude                           # pipe to your coding agent (claude, opencode, codex, cursor-agent, ...)
-flue add https://e2b.dev --category sandbox | claude   # build one from scratch — pass the provider's docs URL as the agent's starting point
+flue dev --target node
+flue build --target node
+flue run hello --target node --id demo --payload '{"text":"Hello"}'
+flue logs <runId>
 ```
 
-The CLI fetches the markdown for the named connector and prints it to stdout when run by an agent (or with `--print`), or shows a short copyable `flue add ... | <agent>` recipe when run by a human in a terminal. Your agent reads the markdown and writes a small TypeScript adapter into `./.flue/connectors/<name>.ts` (or `./connectors/<name>.ts` for the root layout).
+`flue.config.ts` can set `target`, `root`, and `output`:
 
-## Running Agents
+```ts
+import { defineConfig } from '@flue/cli/config';
 
-### Local Development (`flue dev`)
-
-Long-running watch-mode dev server. Rebuilds and reloads on file changes — edit an agent, re-run `curl`, see your change.
-
-```bash
-flue dev --target node          # Node.js dev server
-flue dev --target cloudflare    # Cloudflare Workers (via wrangler) dev server
+export default defineConfig({ target: 'node' });
 ```
 
-Defaults to port `3583` ("FLUE" on a phone keypad). Override with `--port`.
+## Cloudflare
 
-`flue dev --target cloudflare` requires `wrangler` as a peer dependency in your project (`npm install --save-dev wrangler`).
+Cloudflare builds support Workers AI models such as `cloudflare/@cf/moonshotai/kimi-k2.6`. Add an `AI` binding in `wrangler.jsonc`; no provider API key is needed for that model path.
 
-#### Loading environment variables
+Cloudflare shell workspace examples live in [`examples/cloudflare`](examples/cloudflare). They show R2/git hydration followed by `loadFromSandbox: true` discovery inside the workspace.
 
-Pass `--env <path>` to load a `.env`-format file. Works for both targets:
+## Examples
 
-```bash
-flue dev --target node --env .env
-flue dev --target cloudflare --env .env
-```
-
-Repeatable; later files override earlier ones on key collision. Shell-set env vars win over file values. Edits to the file trigger a reload. Same flag works for `flue run`.
-
-### Trigger From the CLI (`flue run`)
-
-Build and run any agent locally, perfect for running in CI or for one-shot scripted invocations. Production-shaped — builds the deployable artifact and starts it once.
-
-```bash
-flue run hello --target node --id test-1 \
-  --payload '{"text": "Hello world", "language": "French"}'
-```
-
-### Trigger From HTTP Endpoint (`flue build`)
-
-Build and deploy your agents as a web server, perfect for hosted agents.
-
-`flue build` builds to a `./dist` directory, which you can then deploy. Cloudflare and any Node.js host are supported today, with more coming in the future.
-
-```
-flue build --target node          # Node.js server (single bundled .mjs)
-flue build --target cloudflare    # Cloudflare Workers + Durable Objects
-```
-
-For Cloudflare, `flue build` produces an unbundled TypeScript entry that `wrangler deploy` bundles itself — the same path `flue dev --target cloudflare` uses. Dev and deploy go through the same bundler, so what works in dev will work in production.
+- [`examples/hello-world`](examples/hello-world) covers inline actions, defined agents, bundled tools, bundled skills, subagents, sandbox loading, sessions, and result schemas.
+- [`examples/cloudflare`](examples/cloudflare) covers Workers AI plus Cloudflare workspace hydration.
+- [`examples/sentry`](examples/sentry) shows global event observation for error reporting.

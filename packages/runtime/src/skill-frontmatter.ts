@@ -18,7 +18,7 @@ export interface ParseSkillMarkdownOptions {
 export function parseSkillMarkdown(content: string, options: ParseSkillMarkdownOptions): ParsedSkillMarkdown {
 	const match = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)([\s\S]*)$/);
 	if (!match) {
-		throw new Error(`[flue] Skill ${options.path} must begin with YAML frontmatter delimited by ---.`);
+		throw new Error(`[flue] Skill ${options.path} is missing YAML frontmatter. Start SKILL.md with "---", include "name" and "description", then close the block with "---".`);
 	}
 
 	let raw: unknown;
@@ -36,7 +36,7 @@ export function parseSkillMarkdown(content: string, options: ParseSkillMarkdownO
 	validateSkillName(name, options);
 	const description = requireString(raw.description, options.path, 'description');
 	if (description.length > 1024) {
-		throw new Error(`[flue] Skill ${options.path} description must be at most 1024 characters.`);
+		throw new Error(`[flue] Skill ${options.path} frontmatter description exceeds the 1024-character Agent Skills limit. Shorten "description" to a concise one-line summary.`);
 	}
 
 	const license = optionalString(raw.license, options.path, 'license');
@@ -62,12 +62,12 @@ function validateSkillName(name: string, options: ParseSkillMarkdownOptions): vo
 	}
 	if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
 		throw new Error(
-			`[flue] Skill ${options.path} name "${name}" must contain only lowercase letters, numbers, and single internal hyphens.`,
+			`[flue] Skill ${options.path} frontmatter name "${name}" must contain only lowercase letters, numbers, and single internal hyphens. Use a spec-compliant value such as "review-pr".`,
 		);
 	}
 	if (name !== options.directoryName) {
 		throw new Error(
-			`[flue] Skill ${options.path} declares name "${name}", but its directory is "${options.directoryName}". These must match.`,
+			`[flue] Skill ${options.path} declares frontmatter name "${name}", but Agent Skills requires it to match directory "${options.directoryName}"; names must match. Rename the directory or change "name" so they match.`,
 		);
 	}
 }

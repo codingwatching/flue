@@ -272,12 +272,12 @@ into, you can finish that work by wiring the connector into it. Otherwise,
 share this snippet so they can wire it up themselves.
 
 ```ts
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import { islo } from '../connectors/islo'; // adjust path to match the user's layout
 
 export const triggers = { webhook: true };
 
-export default async function ({ init }: FlueContext) {
+export default async function ({ init }: ActionContext) {
   const harness = await init({
     sandbox: islo('my-sandbox'),
     model: 'anthropic/claude-sonnet-4-6',

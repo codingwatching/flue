@@ -58,7 +58,7 @@ examples/sentry/
 ├── flue.config.ts            ← build-time config (target, paths)
 ├── package.json
 ├── tsconfig.json
-├── AGENTS.md                 ← system prompt for any agent that calls init()
+├── AGENTS.md                 ← repo guidance file; sandbox loading is opt-in
 ├── README.md                 ← you are here
 └── .flue/
     ├── app.ts                ← Sentry.init + observe(...) bridge
@@ -88,7 +88,7 @@ import { observe } from '@flue/runtime/app';
 
 observe((event, ctx) => {
   // event is a fully decorated FlueEvent
-  // ctx is the FlueContext of the run that emitted it
+  // ctx is the ActionContext of the run that emitted it
 });
 ```
 

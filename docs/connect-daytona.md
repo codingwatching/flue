@@ -50,13 +50,13 @@ Instead of letting `init()` spin up a default virtual sandbox, create a Daytona 
 Applied to the Hello World agent from the deploy guides:
 
 ```typescript
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import { Daytona } from '@daytona/sdk';
 import { daytona } from '../connectors/daytona';
 
 export const triggers = { webhook: true };
 
-export default async function ({ init, env }: FlueContext) {
+export default async function ({ init, env }: ActionContext) {
   const client = new Daytona({ apiKey: env.DAYTONA_API_KEY });
   const sandbox = await client.create();
 
@@ -77,13 +77,13 @@ You own the sandbox. Flue does not delete it for you — sandboxes persist acros
 If your agent needs the sandbox in a specific state before prompting — a repo cloned, dependencies installed, config files written — do the setup in one session, then spin up a second `init()` for the working session with the right `cwd`:
 
 ```typescript
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import { Daytona } from '@daytona/sdk';
 import { daytona } from '../connectors/daytona';
 
 export const triggers = { webhook: true };
 
-export default async function ({ init, payload, env }: FlueContext) {
+export default async function ({ init, payload, env }: ActionContext) {
   const client = new Daytona({ apiKey: env.DAYTONA_API_KEY });
   const sandbox = await client.create();
 
@@ -98,10 +98,11 @@ export default async function ({ init, payload, env }: FlueContext) {
 
   // Working session — same sandbox, but rooted at the project directory.
   const projectHarness = await init({
-    id: 'project',
+    name: 'project',
     sandbox: daytona(sandbox),
     cwd: '/workspace/project',
     model: 'anthropic/claude-sonnet-4-6',
+    loadFromSandbox: true,
   });
   const session = await projectHarness.session();
 
@@ -109,7 +110,7 @@ export default async function ({ init, payload, env }: FlueContext) {
 }
 ```
 
-Both `init()` calls share the same Daytona sandbox. The second passes `cwd` so the agent's tools operate inside the project directory.
+Both `init()` calls share the same Daytona sandbox. The second passes `cwd` so the agent's tools operate inside the project directory, and `loadFromSandbox: true` so a deliberately cloned repo can supply its own `AGENTS.md` / `CLAUDE.md` and sandbox skills when that is part of the product design.
 
 ## Configuring the sandbox
 

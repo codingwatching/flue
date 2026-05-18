@@ -9,8 +9,8 @@ end-to-end so it's easy to copy the pattern into a real app.
 | Agent                          | Demonstrates                                                                       |
 | ------------------------------ | ---------------------------------------------------------------------------------- |
 | `with-cloudflare-binding.ts`   | Routing model traffic through the Workers AI binding (no API keys).               |
-| `skills-from-r2.ts`            | Hydrating a cf-shell `Workspace` from an R2 bucket and using a discovered skill.  |
-| `skills-from-git.ts`           | Hydrating a cf-shell `Workspace` from a git repo via `createGit`.                 |
+| `skills-from-r2.ts`            | Hydrating a cf-shell `Workspace` from R2, then using `loadFromSandbox: true`.     |
+| `skills-from-git.ts`           | Hydrating a cf-shell `Workspace` from git, then loading sandbox context.          |
 
 ## Setup
 
@@ -90,10 +90,10 @@ curl -X POST http://localhost:3583/agents/skills-from-git/test-1 \
   -H 'Content-Type: application/json' -d '{}'
 ```
 
-`skills-from-r2` and `skills-from-git` write a `/.hydrated` sentinel into
+`skills-from-r2` and `skills-from-git` write source-specific hydration sentinels into
 the Durable Object's SQLite on first run; second-run hydration is a no-op
-on the sentinel check. Bump the sentinel key in source (or wipe the DO's
-storage) to force re-hydration.
+on the matching sentinel check. Bump that example's sentinel key in source
+(or wipe the DO's storage) to force re-hydration.
 
 ## Migrating from `getVirtualSandbox`
 

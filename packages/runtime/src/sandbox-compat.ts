@@ -1,7 +1,6 @@
 throw new Error(
-	'[@flue/runtime] The @flue/runtime/sandbox entrypoint has been folded into the root @flue/runtime export. ' +
-		'Update imports from "@flue/runtime/sandbox" to "@flue/runtime". ' +
-		'See the changelog: https://github.com/withastro/flue/blob/main/CHANGELOG.md#unreleased',
+	'[@flue/runtime] Importing from "@flue/runtime/sandbox" is no longer supported because that entrypoint was folded into the root runtime package. ' +
+		'Write `import type { SandboxFactory, SessionEnv } from "@flue/runtime"` instead.',
 );
 
 // Preserve the old type surface for one release so TypeScript users get the

@@ -49,6 +49,7 @@ export interface SkillDefinition {
 
 export type Skill = SkillDefinition;
 
+/** Reusable agent value created by `defineAgent()`. Pass it to `init({ agent })` or delegate with `session.task(..., { agent })`. */
 export interface AgentDefinition {
 	name: string;
 	description?: string;
@@ -338,7 +339,12 @@ export interface AgentInit {
 	/** Working directory for context discovery, tools, and shell calls. Defaults to the sandbox cwd. */
 	cwd?: string;
 
+	/** Raw workspace markdown appended after agent instructions for this harness. */
 	context?: string;
+	/**
+	 * Opt into sandbox context/skill discovery. `true` uses conventional cwd paths;
+	 * object fields are explicit-path and independent, e.g. `{ skills: '/repo/.agents/skills' }`.
+	 */
 	loadFromSandbox?: boolean | { skills?: string; context?: string };
 
 	/**
@@ -415,7 +421,7 @@ export interface FlueSessions {
 	delete(name?: string): Promise<void>;
 }
 
-export interface SessionOptions {}
+export type SessionOptions = {};
 
 // ─── Flue Session ───────────────────────────────────────────────────────────
 
@@ -435,6 +441,7 @@ export interface CallHandle<T> extends PromiseLike<T> {
 export interface FlueSession {
 	readonly name: string;
 
+	/** Send a prompt into the current session. Pass `result` for schema-validated structured data. */
 	prompt<S extends v.GenericSchema>(
 		text: string,
 		options: PromptOptions<S> & { result: S },
@@ -454,6 +461,7 @@ export interface FlueSession {
 	 */
 	readonly fs: FlueFs;
 
+	/** Run a bundled skill value or a registered skill name; string names are useful for sandbox-discovered skills. */
 	skill<S extends v.GenericSchema>(
 		skill: SkillDefinition | string,
 		options: SkillOptions<S> & { result: S },
@@ -464,6 +472,7 @@ export interface FlueSession {
 	): CallHandle<PromptResultResponse<v.InferOutput<S>>>;
 	skill(skill: SkillDefinition | string, options?: SkillOptions): CallHandle<PromptResponse>;
 
+	/** Run an isolated task session; pass `{ agent }` to delegate to an explicit agent value. */
 	task<S extends v.GenericSchema>(
 		text: string,
 		options: TaskOptions<S> & { result: S },

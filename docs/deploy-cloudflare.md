@@ -2,7 +2,7 @@
 
 Build and deploy Flue agents on Cloudflare Workers. This guide walks you through the different kinds of agents you can build — from simple prompt-and-response endpoints to full coding agents backed by persistent storage and remote sandboxes.
 
-By the end, you will have a Flue agent running on Cloudflare Workers, and you will know how to add roles, R2-backed context, Cloudflare sandboxes, and Durable Object-backed sessions.
+By the end, you will have a Flue agent running on Cloudflare Workers, and you will know how to add agent definitions, bundled skills, R2-backed workspaces, Cloudflare sandboxes, and Durable Object-backed sessions.
 
 ## Project layout
 
@@ -35,12 +35,12 @@ npm install -D @flue/cli wrangler
 `.flue/actions/translate.ts`:
 
 ```typescript
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import * as v from 'valibot';
 
 export const triggers = { webhook: true };
 
-export default async function ({ init, payload }: FlueContext) {
+export default async function ({ init, payload }: ActionContext) {
   const harness = await init({ model: 'anthropic/claude-sonnet-4-6' });
   const session = await harness.session();
 
@@ -117,28 +117,20 @@ curl http://localhost:3583/agents/translate/test-1 \
 
 `flue run` starts the generated server in Node.js, so it only supports `--target node`. Cloudflare builds use Worker-only runtime modules — `flue dev --target cloudflare` is the equivalent for testing them locally.
 
-## Roles
+## Agent definitions
 
-Roles shape agent behavior across prompts. They live alongside your agents — under `./roles/` (or `./.flue/roles/` if you use the `.flue/` layout) — and ship with your deployed worker:
-
-`.flue/roles/triager.md`:
-
-```markdown
----
-description: A support agent that triages customer requests
----
-
-You are a support triager. Search the knowledge base thoroughly before
-responding. Always cite the specific articles you referenced. Be empathetic
-but concise.
-```
-
-Use a role by passing its name to `prompt()`:
+Use `defineAgent()` when a Cloudflare action should carry reusable instructions, tools, skills, or subagents:
 
 ```typescript
-await session.prompt('Help me reset my password', {
-  role: 'triager',
+import { defineAgent } from '@flue/runtime';
+
+const triager = defineAgent({
+  name: 'triager',
+  model: 'cloudflare/@cf/moonshotai/kimi-k2.6',
+  instructions: 'Search the knowledge base thoroughly, cite sources, and stay concise.',
 });
+
+const harness = await init({ agent: triager });
 ```
 
 ## Using the sandbox
@@ -148,11 +140,11 @@ By default, the virtual sandbox starts empty — no files, no skills, no context
 Because the agent has shell access, it can set up its own workspace on the fly:
 
 ```typescript
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 
 export const triggers = { webhook: true };
 
-export default async function ({ init, payload }: FlueContext) {
+export default async function ({ init, payload }: ActionContext) {
   const harness = await init({ model: 'openai/gpt-5.5' });
   const session = await harness.session();
 
@@ -188,7 +180,7 @@ This is one of the most powerful patterns on Cloudflare: a support agent that se
 `.flue/actions/support.ts`:
 
 ```typescript
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import {
   getDefaultWorkspace,
   getShellSandbox,
@@ -197,7 +189,7 @@ import {
 
 export const triggers = { webhook: true };
 
-export default async function ({ init, payload, env }: FlueContext) {
+export default async function ({ init, payload, env }: ActionContext) {
   const workspace = getDefaultWorkspace();
 
   if (!(await workspace.exists('/.hydrated'))) {
@@ -208,6 +200,7 @@ export default async function ({ init, payload, env }: FlueContext) {
   const harness = await init({
     sandbox: getShellSandbox({ workspace, loader: env.LOADER }),
     model: 'openrouter/moonshotai/kimi-k2.6',
+    loadFromSandbox: true,
   });
   const session = await harness.session();
 
@@ -216,9 +209,6 @@ export default async function ({ init, payload, env }: FlueContext) {
     workspace for articles relevant to this request, then write a helpful response.
 
     Customer: ${payload.message}`,
-    {
-      role: 'triager',
-    },
   );
 }
 ```
@@ -316,12 +306,12 @@ The base image is published by Cloudflare and bundles the control-plane HTTP ser
 `.flue/actions/assistant.ts`:
 
 ```typescript
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import { getSandbox } from '@cloudflare/sandbox';
 
 export const triggers = { webhook: true };
 
-export default async function ({ init, id, env, payload }: FlueContext) {
+export default async function ({ init, id, env, payload }: ActionContext) {
   // The binding name you chose in wrangler.jsonc is the key on `env`.
   const sandbox = getSandbox(env.Sandbox, id);
   const harness = await init({ sandbox, model: 'anthropic/claude-opus-4-7' });

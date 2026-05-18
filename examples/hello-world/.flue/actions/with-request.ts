@@ -3,7 +3,7 @@ import type { ActionContext } from '@flue/runtime';
 export const triggers = { webhook: true };
 
 /**
- * Demonstrates the request metadata exposed on `FlueContext`.
+ * Demonstrates the request metadata exposed on `ActionContext`.
  *
  * `ctx.req` is the standard Fetch `Request` for the current invocation. Read
  * headers, method, URL, and the raw body — useful for HMAC signature

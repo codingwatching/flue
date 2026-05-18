@@ -9,7 +9,7 @@ This replaces the old `getVirtualSandbox(env.BUCKET)` API. That API described R2
 ## Basic Pattern
 
 ```ts
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 import {
   getDefaultWorkspace,
   getShellSandbox,
@@ -18,7 +18,7 @@ import {
 
 export const triggers = { webhook: true };
 
-export default async function ({ init, env, payload }: FlueContext) {
+export default async function ({ init, env, payload }: ActionContext) {
   const workspace = getDefaultWorkspace();
 
   if (!(await workspace.exists('/.hydrated'))) {

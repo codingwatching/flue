@@ -319,16 +319,15 @@ async function resolveSessionEnv(
 	// from flagging these branches as dead under the narrowed type.
 	if ((sandbox as unknown) === 'empty') {
 		throw new Error(
-			"[flue] `sandbox: 'empty'` is no longer supported. " +
-				'Omit the `sandbox` option (or pass `false`) for the default in-memory sandbox.',
+			"[flue] init({ sandbox: 'empty' }) is no longer supported because the in-memory sandbox is already the default. " +
+				'Write `await init({ model: "provider/model" })` or `await init({ sandbox: false, model: "provider/model" })` instead.',
 		);
 	}
 	if ((sandbox as unknown) === 'local') {
 		throw new Error(
-			"[flue] `sandbox: 'local'` is no longer supported. " +
-				'Install the local connector with `flue add local`, then pass its `local()` factory: ' +
-				"`import { local } from '../connectors/local'; init({ sandbox: local() })`. " +
-				"The factory accepts an `env` option for opting host env vars into the sandbox.",
+			"[flue] init({ sandbox: 'local' }) is no longer supported because host sandboxes now come from connector files. " +
+				'Run `flue add local`, then write `import { local } from "../connectors/local"; await init({ sandbox: local(), model: "provider/model" })`. ' +
+				"Pass `local({ env: { TOKEN: process.env.TOKEN } })` to opt host env vars in.",
 		);
 	}
 	if (isBashFactory(sandbox)) {
@@ -336,8 +335,8 @@ async function resolveSessionEnv(
 	}
 	if (isBashLike(sandbox)) {
 		throw new Error(
-			'[flue] init({ sandbox }) no longer accepts a Bash-like object directly. ' +
-				'Pass a BashFactory instead, e.g. `sandbox: () => new Bash({ fs })`.',
+			'[flue] init({ sandbox }) received a Bash-like object, but direct Bash instances are no longer accepted. ' +
+				'Write `await init({ sandbox: () => new Bash({ fs }), model: "provider/model" })` so Flue can construct the sandbox per harness.',
 		);
 	}
 	if (config.resolveSandbox) {
@@ -348,5 +347,5 @@ async function resolveSessionEnv(
 		const env = await sandbox.createSessionEnv({ id, cwd });
 		return { env, toolFactory: sandbox.tools };
 	}
-	throw new Error('[flue] Invalid sandbox option passed to init().');
+	throw new Error('[flue] init({ sandbox }) received an unsupported value. Omit `sandbox`, pass `false`, pass a BashFactory such as `() => new Bash({ fs })`, or pass a connector SandboxFactory installed by `flue add`.');
 }

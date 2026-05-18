@@ -10,6 +10,13 @@ interface DefineAgentInput {
 	subagents?: AgentDefinition[];
 }
 
+/**
+ * Define a reusable agent value for `init({ agent })`, task delegation, and bundled resources.
+ *
+ * @example
+ * const reviewer = defineAgent({ name: 'reviewer', model: 'anthropic/claude-sonnet-4-6', instructions: 'Review code.' });
+ * const harness = await init({ agent: reviewer });
+ */
 export function defineAgent(input: DefineAgentInput): AgentDefinition {
 	assertNonEmptyString(input.name, 'defineAgent({ name })');
 	assertOptionalString(input.description, 'defineAgent({ description })');
@@ -38,13 +45,14 @@ export function normalizeAgentDefinition(options: AgentInit): AgentDefinition {
 	};
 	if (runtimeOptions.instructions !== undefined) {
 		throw new Error(
-			'[flue] init() received `instructions`. Instructions belong on an agent. ' +
-				'Use defineAgent({ instructions: "..." }) and pass it as { agent }.',
+			'[flue] init() received `instructions`, but harness instructions are no longer supported there. ' +
+				'Write `const agent = defineAgent({ name: "my-agent", instructions: "..." }); await init({ agent });` instead.',
 		);
 	}
 	if (runtimeOptions.role !== undefined || runtimeOptions.roles !== undefined) {
 		throw new Error(
-			'[flue] Roles have been removed. Define a subagent with defineAgent({ ... }) and delegate via task() instead.',
+			'[flue] init() received `role` or `roles`, but roles have been removed. ' +
+				'Write `const reviewer = defineAgent({ name: "reviewer" }); const parent = defineAgent({ name: "parent", subagents: [reviewer] });` and delegate with `session.task("...", { agent: reviewer })` instead.',
 		);
 	}
 
@@ -93,11 +101,17 @@ function mergeNamedResources<T extends { name: string }>(
 	for (const resource of merged) {
 		assertNonEmptyString(resource?.name, `${label} name`);
 		if (seen.has(resource.name)) {
-			throw new Error(`[flue] ${label} name "${resource.name}" appears twice in init() configuration. Remove the duplicate.`);
+			throw new Error(`[flue] ${label} name "${resource.name}" is declared both on defineAgent({ ${resourceKeyFor(label)}: [...] }) and init({ ${resourceKeyFor(label)}: [...] }). Keep it in one place.`);
 		}
 		seen.add(resource.name);
 	}
 	return Object.freeze(merged);
+}
+
+function resourceKeyFor(label: string): string {
+	if (label === 'Skill') return 'skills';
+	if (label === 'Tool') return 'tools';
+	return 'subagents';
 }
 
 function assertNamedValues(values: readonly { name: string }[] | undefined, label: string): void {

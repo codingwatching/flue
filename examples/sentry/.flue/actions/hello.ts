@@ -15,11 +15,11 @@
  * Expected: HTTP 200 with `{ result: ..., _meta: { runId } }`.
  *          Zero events in Sentry.
  */
-import type { FlueContext } from '@flue/runtime';
+import type { ActionContext } from '@flue/runtime';
 
 export const triggers = { webhook: true };
 
-export default async function hello(ctx: FlueContext) {
+export default async function hello(ctx: ActionContext) {
 	ctx.log.info('hello agent starting', { instanceId: ctx.id });
 	// No model call needed for the success case — this keeps the
 	// example runnable without an ANTHROPIC_API_KEY when you just
