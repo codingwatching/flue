@@ -3,7 +3,7 @@ import { Harness } from '../src/harness.ts';
 import { InMemorySessionStore } from '../src/session.ts';
 import { defineAgent } from '../src/definition.ts';
 import { defineTool } from '../src/tool.ts';
-import type { AgentConfig, SessionEnv, SkillDefinition } from '../src/types.ts';
+import type { HarnessConfig, SessionEnv, SkillDefinition } from '../src/types.ts';
 
 const sandboxSkill: SkillDefinition = {
 	name: 'sandbox-review',
@@ -66,7 +66,7 @@ describe('task session sandbox context', () => {
 			},
 			delete: async () => {},
 		};
-		const config: AgentConfig = {
+		const config: HarnessConfig = {
 			systemPrompt: '',
 			skills: {},
 			sandboxSkills: {},
@@ -88,7 +88,7 @@ describe('task session sandbox context', () => {
 	});
 
 	it('inherits workspace context and sandbox skills for task agents', async () => {
-		const config: AgentConfig = {
+		const config: HarnessConfig = {
 			systemPrompt: '',
 			workspaceContext: 'Repository context.',
 			skills: { 'sandbox-review': sandboxSkill },
@@ -106,7 +106,7 @@ describe('task session sandbox context', () => {
 				parentEnv: SessionEnv;
 				agent: ReturnType<typeof defineAgent>;
 				depth: number;
-			}): Promise<{ config: AgentConfig }>;
+			}): Promise<{ config: HarnessConfig }>;
 		}).createTaskSession({
 			parentSession: 'default',
 			taskId: 'task',
@@ -133,7 +133,7 @@ describe('task session sandbox context', () => {
 			parameters: { type: 'object' },
 			execute: async () => 'child',
 		});
-		const config: AgentConfig = {
+		const config: HarnessConfig = {
 			systemPrompt: '',
 			skills: {},
 			sandboxSkills: {},
@@ -168,7 +168,7 @@ describe('task session sandbox context', () => {
 			parameters: { type: 'object' },
 			execute: async () => 'parent',
 		});
-		const config: AgentConfig = {
+		const config: HarnessConfig = {
 			systemPrompt: '',
 			skills: {},
 			sandboxSkills: {},

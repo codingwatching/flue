@@ -42,7 +42,7 @@ import { getProviderConfiguration, getRegisteredApiKey } from './runtime/provide
 import { createFlueFs } from './sandbox.ts';
 
 import type {
-	AgentConfig,
+	HarnessConfig,
 	AgentDefinition,
 	BranchSummaryEntry,
 	CallHandle,
@@ -91,7 +91,7 @@ interface SessionInitOptions {
 	name: string;
 	storageKey: string;
 	affinityKey: string;
-	config: AgentConfig;
+	config: HarnessConfig;
 	env: SessionEnv;
 	store: SessionStore;
 	existingData: SessionData | null;
@@ -399,7 +399,7 @@ export class Session implements FlueSession {
 
 	private harness: Agent;
 	private storageKey: string;
-	private config: AgentConfig;
+	private config: HarnessConfig;
 	private env: SessionEnv;
 	private store: SessionStore;
 	private history: SessionHistory;

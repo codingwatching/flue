@@ -1,4 +1,4 @@
-import type { AgentDefinition, AgentInit, SkillDefinition, ToolDefinition } from './types.ts';
+import type { AgentDefinition, HarnessOptions, SkillDefinition, ToolDefinition } from './types.ts';
 
 interface DefineAgentInput {
 	name: string;
@@ -37,8 +37,8 @@ export function defineAgent(input: DefineAgentInput): AgentDefinition {
 	});
 }
 
-export function normalizeAgentDefinition(options: AgentInit): AgentDefinition {
-	const runtimeOptions = options as AgentInit & {
+export function normalizeAgentDefinition(options: HarnessOptions): AgentDefinition {
+	const runtimeOptions = options as HarnessOptions & {
 		instructions?: unknown;
 		role?: unknown;
 		roles?: unknown;

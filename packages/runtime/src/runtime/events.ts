@@ -21,14 +21,14 @@
  * run itself.
  */
 
-import type { FlueContext, FlueEvent } from '../types.ts';
+import type { ActionContext, FlueEvent } from '../types.ts';
 
 /**
  * Subscriber signature. Receives a fully decorated event (with
  * `runId`, `eventIndex`, `timestamp`, and tree-correlation fields
- * attached) and the originating `FlueContext`.
+ * attached) and the originating `ActionContext`.
  */
-export type FlueEventSubscriber = (event: FlueEvent, ctx: FlueContext) => void;
+export type FlueEventSubscriber = (event: FlueEvent, ctx: ActionContext) => void;
 
 const subscribers = new Set<FlueEventSubscriber>();
 
@@ -67,7 +67,7 @@ export function observe(subscriber: FlueEventSubscriber): () => void {
  * Called from `createFlueContext`'s `emitEvent` after the per-context
  * subscribers have run.
  */
-export function dispatchGlobalEvent(event: FlueEvent, ctx: FlueContext): void {
+export function dispatchGlobalEvent(event: FlueEvent, ctx: ActionContext): void {
 	if (subscribers.size === 0) return;
 	// Snapshot to a local array so subscribers that unsubscribe
 	// themselves mid-dispatch don't perturb the iteration.

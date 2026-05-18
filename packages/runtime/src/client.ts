@@ -11,10 +11,10 @@ import { Harness } from './harness.ts';
 import { dispatchGlobalEvent } from './runtime/events.ts';
 import { bashFactoryToSessionEnv, createCwdSessionEnv, isBashLike } from './sandbox.ts';
 import type {
-	AgentConfig,
-	AgentInit,
+	HarnessConfig,
+	HarnessOptions,
 	BashFactory,
-	FlueContext,
+	ActionContext,
 	FlueEvent,
 	FlueEventCallback,
 	FlueHarness,
@@ -31,7 +31,7 @@ export interface FlueContextConfig {
 	runId: string;
 	payload: any;
 	env: Record<string, any>;
-	agentConfig: AgentConfig;
+	agentConfig: HarnessConfig;
 	createDefaultEnv: () => Promise<SessionEnv>;
 	defaultStore: SessionStore;
 	/**
@@ -47,8 +47,8 @@ export interface FlueContextConfig {
 	req?: Request;
 }
 
-/** Extends FlueContext with server-only methods. Agent handlers only see FlueContext. */
-export interface FlueContextInternal extends FlueContext {
+/** Extends ActionContext with server-only methods. Action handlers only see ActionContext. */
+export interface FlueContextInternal extends ActionContext {
 	/** Decorate and dispatch an event, returning the decorated event. */
 	emitEvent(event: FlueEvent): FlueEvent;
 	subscribeEvent(callback: FlueEventCallback): () => void;
@@ -119,7 +119,7 @@ export function createFlueContext(config: FlueContextConfig): FlueContextInterna
 			},
 		},
 
-		async init(options?: AgentInit): Promise<FlueHarness> {
+		async init(options?: HarnessOptions): Promise<FlueHarness> {
 			if (!options) {
 				throw new Error('[flue] init() requires an options object. Pass { agent } or inline resources.');
 			}
@@ -172,7 +172,7 @@ export function createFlueContext(config: FlueContextConfig): FlueContextInterna
 					}
 				}
 
-				const agentConfig: AgentConfig = {
+				const agentConfig: HarnessConfig = {
 					...config.agentConfig,
 					systemPrompt: composeAgentSystemPrompt(normalizedAgent, { context: workspaceContext, skills: effectiveSkills }),
 					workspaceContext,
@@ -243,7 +243,7 @@ function serializeLogError(error: Error): Record<string, unknown> {
 
 async function loadSandboxDiscovery(
 	env: SessionEnv,
-	option: AgentInit['loadFromSandbox'],
+	option: HarnessOptions['loadFromSandbox'],
 ): Promise<{ context: string; skills: SkillDefinition[]; skillsEnabled: boolean }> {
 	if (option === true) {
 		return {
@@ -308,7 +308,7 @@ function isSandboxFactory(value: unknown): value is SandboxFactory {
 /** Resolve sandbox option to its session environment and optional tool factory. */
 async function resolveSessionEnv(
 	id: string,
-	sandbox: AgentInit['sandbox'],
+	sandbox: HarnessOptions['sandbox'],
 	config: FlueContextConfig,
 	cwd: string | undefined,
 ): Promise<{ env: SessionEnv; toolFactory?: SessionToolFactory }> {
@@ -317,7 +317,7 @@ async function resolveSessionEnv(
 	}
 	// JS-caller / `any`-input fallback for the removed `'empty'` and
 	// `'local'` magic strings. TS callers get compile errors from the
-	// `AgentInit['sandbox']` union. The `as unknown` cast keeps `tsc`
+	// `HarnessOptions['sandbox']` union. The `as unknown` cast keeps `tsc`
 	// from flagging these branches as dead under the narrowed type.
 	if ((sandbox as unknown) === 'empty') {
 		throw new Error(

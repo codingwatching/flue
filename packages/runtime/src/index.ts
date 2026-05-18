@@ -7,7 +7,7 @@ export type {
 	FlueFs,
 	FlueSessions,
 	FlueSession,
-	AgentInit,
+	HarnessOptions,
 	FlueEvent,
 	FlueEventCallback,
 	SessionData,
@@ -36,7 +36,6 @@ export type {
 	SkillResources,
 	SkillResourceEntry,
 	SkillSource,
-	AgentConfig,
 	ModelConfig,
 	ToolDef,
 	ToolDefinition,
@@ -60,7 +59,7 @@ export { createSandboxSessionEnv, type SandboxApi } from './sandbox.ts';
 // Note: createFlueContext, InMemorySessionStore, bashFactoryToSessionEnv, and the
 // FlueContextConfig/FlueContextInternal types are intentionally NOT re-exported
 // here. They are internal runtime helpers consumed exclusively by the generated
-// server entry point — see `@flue/runtime/internal`. User agent code should not
+// server entry point — see `@flue/runtime/internal`. User action code should not
 // need to import any of them directly.
 //
 // Note: `build`, `dev`, and the build/dev/env helpers used to be re-exported

@@ -250,21 +250,21 @@ export interface ProviderSettings {
 	storeResponses?: boolean;
 }
 
-// ─── Agent Config (internal, passed to the harness at runtime) ──────────────
+// ─── Harness Config (internal, passed to the harness at runtime) ────────────
 
-export interface AgentConfig {
+export interface HarnessConfig {
 	systemPrompt: string;
 	workspaceContext?: string;
 	skills: Record<string, SkillDefinition>;
 	sandboxSkills: Record<string, SkillDefinition>;
 	sandboxSkillDiscoveryHint: boolean;
 	subagents: Record<string, AgentDefinition>;
-	/** Agent-wide default model. Undefined only when no invocation-level or agent model exists. */
+	/** Harness default model. Undefined only when no invocation-level or agent model exists. */
 	model: Model<any> | undefined;
 	/** Resolve model config to a Model instance. Throws on invalid model strings. */
 	resolveModel: (model: ModelConfig | undefined) => Model<any> | undefined;
 	/**
-	 * Agent-wide default reasoning effort. Per-call values override this.
+	 * Harness default reasoning effort. Per-call values override this.
 	 * The harness substitutes `"medium"` when unset.
 	 */
 	thinkingLevel?: ThinkingLevel;
@@ -305,7 +305,7 @@ export interface ActionContext<TPayload = any, TEnv = Record<string, any>> {
 	 * body-reading method, calling another will throw. Use `req.clone()` if
 	 * you need to read it more than once.
 	 *
-	 * Undefined when the agent is invoked outside an HTTP context (e.g. future
+	 * Undefined when the action is invoked outside an HTTP context (e.g. future
 	 * cron / queue triggers). Today every trigger is HTTP, so in practice this
 	 * is always defined — the optional type lets the contract hold when other
 	 * trigger types ship.
@@ -319,7 +319,7 @@ export interface ActionContext<TPayload = any, TEnv = Record<string, any>> {
 	/** Emit structured log events visible in the run event stream. */
 	readonly log: FlueLogger;
 	/** Initialize a harness with sandbox + persistence. */
-	init(options: AgentInit): Promise<FlueHarness>;
+	init(options: HarnessOptions): Promise<FlueHarness>;
 }
 
 /** @deprecated Use `ActionContext` instead. `FlueContext` is kept as an alias for one minor version and will be removed. */
@@ -332,7 +332,7 @@ export interface FlueLogger {
 }
 
 /** Harness options. A default model is required unless explicitly disabled with `model: false`. */
-export interface AgentInit {
+export interface HarnessOptions {
 	/** Harness name. Defaults to `"default"`. */
 	name?: string;
 
@@ -372,7 +372,7 @@ export interface AgentInit {
 	/** Default reasoning effort for every prompt(), skill(), and task() call. */
 	thinkingLevel?: ThinkingLevel;
 
-	/** Agent resources added on top of resources bundled into `agent`. */
+	/** Harness resources added on top of resources bundled into `agent`. */
 	skills?: SkillDefinition[];
 	tools?: ToolDefinition[];
 	subagents?: AgentDefinition[];
@@ -630,7 +630,7 @@ export interface PromptOptions<S extends v.GenericSchema | undefined = undefined
 	tools?: ToolDefinition[];
 	/** e.g., 'anthropic/claude-sonnet-4-20250514' */
 	model?: string;
-	/** Override reasoning effort for this call. See `AgentInit.thinkingLevel`. */
+	/** Override reasoning effort for this call. See `HarnessOptions.thinkingLevel`. */
 	thinkingLevel?: ThinkingLevel;
 	/** Cancel this call. See `CallHandle`. */
 	signal?: AbortSignal;
@@ -647,7 +647,7 @@ export interface SkillOptions<S extends v.GenericSchema | undefined = undefined>
 	schema?: S;
 	tools?: ToolDefinition[];
 	model?: string;
-	/** Override reasoning effort for this call. See `AgentInit.thinkingLevel`. */
+	/** Override reasoning effort for this call. See `HarnessOptions.thinkingLevel`. */
 	thinkingLevel?: ThinkingLevel;
 	/** Cancel this call. See `CallHandle`. */
 	signal?: AbortSignal;
@@ -664,7 +664,7 @@ export interface TaskOptions<S extends v.GenericSchema | undefined = undefined> 
 	tools?: ToolDefinition[];
 	agent?: AgentDefinition;
 	model?: string;
-	/** Override reasoning effort for this call. See `AgentInit.thinkingLevel`. */
+	/** Override reasoning effort for this call. See `HarnessOptions.thinkingLevel`. */
 	thinkingLevel?: ThinkingLevel;
 	/** Working directory for the detached task session. Defaults to the parent session cwd. */
 	cwd?: string;

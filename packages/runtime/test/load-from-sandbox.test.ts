@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createFlueContext } from '../src/client.ts';
 import { InMemorySessionStore } from '../src/session.ts';
-import type { AgentConfig, FileStat, FlueEvent, SessionEnv } from '../src/types.ts';
+import type { HarnessConfig, FileStat, FlueEvent, SessionEnv } from '../src/types.ts';
 
 function createEnv(options: { files?: Record<string, string>; dirs?: Record<string, string[]> }): SessionEnv {
 	const files = new Map(Object.entries(options.files ?? {}));
@@ -67,7 +67,7 @@ describe('init loadFromSandbox', () => {
 			context: 'Invocation context.',
 			model: false,
 		});
-		const config = (harness as unknown as { config: AgentConfig }).config;
+		const config = (harness as unknown as { config: HarnessConfig }).config;
 		expect(config.skills.review?.name).toBe('review');
 		expect(config.sandboxSkills.review?.name).toBe('review');
 		expect(config.systemPrompt).toContain('Repository context.\n\nInvocation context.');

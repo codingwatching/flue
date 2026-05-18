@@ -107,7 +107,7 @@ export interface HandleAgentOptions {
  *   - `X-Webhook: true` → fire-and-forget. Returns 202 immediately; the
  *     handler runs in the background. Errors are logged server-side.
  *   - `Accept: text/event-stream` (and not webhook) → SSE streaming. Returns
- *     200 + text/event-stream. Events come from the FlueContext's event
+ *     200 + text/event-stream. Events come from the ActionContext's event
  *     callback; final result is appended as `event: result`. Per-event errors
  *     surface as `event: error` envelopes.
  *   - Otherwise → sync. Returns 200 + JSON `{ result }`.

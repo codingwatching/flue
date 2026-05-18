@@ -6,7 +6,7 @@
  * resolve through normal package-exports resolution at both build time and
  * runtime, for both workspace-linked and published-npm installs.
  *
- * User agent code should never import from here.
+ * User action code should never import from here.
  */
 import { type Api, getModel, type KnownProvider, type Model } from '@earendil-works/pi-ai';
 import {

@@ -3,7 +3,7 @@ import { composeAgentSystemPrompt } from './context.ts';
 import { createCwdSessionEnv, createFlueFs } from './sandbox.ts';
 import { type CreateTaskSessionOptions, deleteSessionTree, Session } from './session.ts';
 import type {
-	AgentConfig,
+	HarnessConfig,
 	CallHandle,
 	FlueEventCallback,
 	FlueFs,
@@ -40,7 +40,7 @@ export class Harness implements FlueHarness {
 		private actionName: string,
 		private instanceId: string,
 		readonly name: string,
-		private config: AgentConfig,
+		private config: HarnessConfig,
 		private env: SessionEnv,
 		private store: SessionStore,
 		private eventCallback?: FlueEventCallback,
@@ -135,7 +135,7 @@ export class Harness implements FlueHarness {
 		const taskAgent = options.agent;
 		const taskSkills = taskAgent ? mergeTaskSkills(taskAgent.skills ?? [], this.config.sandboxSkills) : undefined;
 		const taskAgentTools = taskAgent ? [...(taskAgent.tools ?? [])] : this.agentTools;
-		const taskConfig: AgentConfig = taskAgent
+		const taskConfig: HarnessConfig = taskAgent
 			? {
 					...this.config,
 					systemPrompt: composeAgentSystemPrompt(taskAgent, {
@@ -197,8 +197,8 @@ export class Harness implements FlueHarness {
 
 function mergeTaskSkills(
 	declared: readonly SkillDefinition[],
-	sandboxSkills: AgentConfig['sandboxSkills'],
-): AgentConfig['skills'] {
+	sandboxSkills: HarnessConfig['sandboxSkills'],
+): HarnessConfig['skills'] {
 	const skills = Object.fromEntries(declared.map((skill) => [skill.name, skill]));
 	for (const skill of Object.values(sandboxSkills)) {
 		if (skills[skill.name]) {
