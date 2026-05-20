@@ -589,6 +589,58 @@ describe('Bare /runs/:runId routes via flue()', () => {
 		expect(overriddenHarness.agentTools).toEqual([overrideTool]);
 	});
 
+	it('uses inherited instructions and lets init-level instructions replace them', async () => {
+		const ctx = createFlueContext({
+			agentName: 'hello',
+			id: 'inst-1',
+			runId: 'run-instructions',
+			payload: {},
+			env: {},
+			createDefaultEnv: async () => bashFactoryToSessionEnv(async () => new Bash()),
+			defaultStore: new InMemorySessionStore(),
+			registrationStore: new InMemoryRegistrationStore(),
+			agentConfig: {
+				systemPrompt: '',
+				skills: {},
+				roles: {},
+				model: undefined,
+				resolveModel: () => undefined,
+			},
+		});
+
+		const inherited = await ctx.init({
+			name: 'instructions-inherited',
+			inherit: { model: false, instructions: 'Inherited agent instructions.' },
+		});
+		const inheritedHarness = inherited.harness() as unknown as { config: AgentConfig };
+		expect(inheritedHarness.config.systemPrompt).toContain('Inherited agent instructions.');
+		expect(inheritedHarness.config.instructions).toBe('Inherited agent instructions.');
+
+		const childContext = await (inherited.harness() as unknown as {
+			createTaskSession(options: {
+				parentSession: string;
+				taskId: string;
+				parentEnv: unknown;
+				depth: number;
+			}): Promise<{ config: AgentConfig }>;
+		}).createTaskSession({
+			parentSession: 'default',
+			taskId: 'child',
+			parentEnv: await bashFactoryToSessionEnv(async () => new Bash()),
+			depth: 1,
+		});
+		expect(childContext.config.systemPrompt).toContain('Inherited agent instructions.');
+
+		const overridden = await ctx.init({
+			name: 'instructions-override',
+			inherit: { model: false, instructions: 'Inherited agent instructions.' },
+			instructions: 'Override agent instructions.',
+		});
+		const overriddenHarness = overridden.harness() as unknown as { config: AgentConfig };
+		expect(overriddenHarness.config.systemPrompt).toContain('Override agent instructions.');
+		expect(overriddenHarness.config.systemPrompt).not.toContain('Inherited agent instructions.');
+	});
+
 	it('keeps the missing-model error when neither init nor inherit supplies one', async () => {
 		const ctx = createFlueContext({
 			agentName: 'hello',

@@ -147,9 +147,11 @@ export function composeSystemPrompt(
 	agentsMd: string,
 	skills: Record<string, Skill>,
 	env?: { cwd: string; directoryListing?: string[] },
+	instructions?: string,
 ): string {
 	const parts: string[] = [HEADLESS_PREAMBLE];
 
+	if (instructions) parts.push('', instructions);
 	if (agentsMd) parts.push('', agentsMd);
 
 	const skillEntries = Object.values(skills);
@@ -187,6 +189,7 @@ export function composeSystemPrompt(
 /** Discover AGENTS.md, local skills, and directory listing from the session's cwd. */
 export async function discoverSessionContext(
 	env: SessionEnv,
+	instructions?: string,
 ): Promise<{ systemPrompt: string; skills: Record<string, Skill> }> {
 	const cwd = env.cwd;
 
@@ -200,10 +203,15 @@ export async function discoverSessionContext(
 		// readdir failed (e.g., cwd doesn't exist yet) — skip silently
 	}
 
-	const systemPrompt = composeSystemPrompt(agentsMd, skills, {
-		cwd,
-		directoryListing,
-	});
+	const systemPrompt = composeSystemPrompt(
+		agentsMd,
+		skills,
+		{
+			cwd,
+			directoryListing,
+		},
+		instructions,
+	);
 
 	return { systemPrompt, skills };
 }

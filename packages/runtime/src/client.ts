@@ -173,7 +173,7 @@ export function createFlueContext(config: FlueContextConfig): FlueContextInterna
 					? createCwdSessionEnv(baseEnv, baseEnv.resolvePath(resolvedOptions.cwd))
 					: baseEnv;
 				const store: SessionStore = resolvedOptions.persist ?? config.defaultStore;
-				const localContext = await discoverSessionContext(env);
+				const localContext = await discoverSessionContext(env, definition.instructions);
 
 				// Harness-level model override. Per-call `model` on prompt()/skill() still wins
 				// because resolveModelForCall() applies it on top of this default.
@@ -182,6 +182,7 @@ export function createFlueContext(config: FlueContextConfig): FlueContextInterna
 				const agentConfig: AgentConfig = {
 					...config.agentConfig,
 					systemPrompt: localContext.systemPrompt,
+					instructions: definition.instructions,
 					skills: localContext.skills,
 					model: agentModel,
 					role: resolvedOptions.role ?? config.agentConfig.role,
@@ -256,6 +257,7 @@ function hasInitModel(options: AgentInit | undefined): boolean {
 function resolveInitDefinition(options: AgentInit | undefined): AgentInit {
 	return {
 		model: options?.inherit?.model,
+		instructions: options?.inherit?.instructions,
 		tools: options?.inherit?.tools,
 		thinkingLevel: options?.inherit?.thinkingLevel,
 		compaction: options?.inherit?.compaction,

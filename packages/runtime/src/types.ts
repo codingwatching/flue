@@ -269,6 +269,8 @@ export interface ProviderSettings {
 export interface AgentConfig {
 	/** Discovered at runtime from AGENTS.md + .agents/skills/ in the session's cwd. */
 	systemPrompt: string;
+	/** Agent instructions prepended ahead of discovered workspace context. */
+	instructions?: string;
 	/** Discovered at runtime from .agents/skills/ in the session's cwd. */
 	skills: Record<string, Skill>;
 	roles: Record<string, Role>;
@@ -377,6 +379,9 @@ export interface AgentInit {
 
 	/** Harness name. Defaults to `"default"`. */
 	name?: string;
+
+	/** Agent instructions prepended ahead of discovered workspace context. */
+	instructions?: string;
 
 	/** Working directory for context discovery, tools, and shell calls. Defaults to the sandbox cwd. */
 	cwd?: string;
