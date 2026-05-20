@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { createDurableDefaultWorkspaceStore } from '../src/cloudflare/default-workspace-store.ts';
 import { createDurableInstanceRunAdmission } from '../src/cloudflare/instance-admission.ts';
+import { createDurableRegistrationStore } from '../src/cloudflare/registration-store.ts';
 import {
 	createRegistryOps,
 	handleRegistryRequest,
@@ -50,6 +51,23 @@ describe('createDurableDefaultWorkspaceStore (SQL paths)', () => {
 		expect(await recovered.readlink('/context-link.txt')).toBe('/context.txt');
 		const isolated = await createDurableDefaultWorkspaceStore(sql).get(isolatedScope);
 		expect(await isolated.exists('/context.txt')).toBe(false);
+	});
+});
+
+describe('createDurableRegistrationStore (SQL paths)', () => {
+	it('persists completed registrations by agent and instance', async () => {
+		const sql = makeFakeSql();
+		const store = createDurableRegistrationStore(sql);
+		const first = { agentName: 'hello', instanceId: 'inst_a' };
+		const isolatedAgent = { agentName: 'other', instanceId: 'inst_a' };
+		const isolatedInstance = { agentName: 'hello', instanceId: 'inst_b' };
+
+		const claim = await store.claim(first);
+		expect(claim).toBeTruthy();
+		await claim?.complete();
+		expect(await createDurableRegistrationStore(sql).claim(first)).toBeNull();
+		expect(await store.claim(isolatedAgent)).toBeTruthy();
+		expect(await store.claim(isolatedInstance)).toBeTruthy();
 	});
 });
 

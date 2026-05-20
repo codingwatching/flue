@@ -21,6 +21,7 @@ export { getCloudflareAIBindingApiProvider } from './workers-ai-provider.ts';
 export type { CloudflareGatewayOptions } from './gateway.ts';
 
 export { createDurableDefaultWorkspaceStore } from './default-workspace-store.ts';
+export { createDurableRegistrationStore } from './registration-store.ts';
 export { FlueRegistry } from './registry-do.ts';
 export { createCloudflareRunRegistry } from './run-registry.ts';
 export {

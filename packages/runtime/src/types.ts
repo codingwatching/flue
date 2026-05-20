@@ -338,6 +338,8 @@ export interface FlueContext<TPayload = any, TEnv = Record<string, any>> {
 	readonly req: Request | undefined;
 	/** Emit structured log events visible in the run event stream. */
 	readonly log: FlueLogger;
+	/** Run one-time setup for this agent instance. May be called once per request. */
+	register(callback: () => unknown | Promise<unknown>): Promise<void>;
 	/** Initialize a harness with sandbox + persistence. */
 	init(options: AgentInit): Promise<FlueHarness>;
 }

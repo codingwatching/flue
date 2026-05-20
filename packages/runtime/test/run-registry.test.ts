@@ -12,6 +12,7 @@ import {
 	InMemoryRunRegistry,
 	InMemoryRunStore,
 	InMemorySessionStore,
+	InMemoryRegistrationStore,
 	type RunRecord,
 	type RunStore,
 } from '../src/internal.ts';
@@ -272,6 +273,7 @@ describe('Bare /runs/:runId routes via flue()', () => {
 					},
 					createDefaultEnv: async () => ({}) as never,
 					defaultStore: new InMemorySessionStore(),
+					registrationStore: new InMemoryRegistrationStore(),
 				}),
 			runStore,
 			runRegistry,
@@ -384,6 +386,7 @@ describe('Bare /runs/:runId routes via flue()', () => {
 					agentConfig: { systemPrompt: '', skills: {}, roles: {}, model: undefined, resolveModel: () => undefined },
 					createDefaultEnv: async () => ({}) as never,
 					defaultStore: new InMemorySessionStore(),
+					registrationStore: new InMemoryRegistrationStore(),
 				}),
 			instanceAdmission,
 		});
@@ -424,6 +427,7 @@ describe('Bare /runs/:runId routes via flue()', () => {
 					},
 					createDefaultEnv: async () => ({}) as never,
 					defaultStore: new InMemorySessionStore(),
+					registrationStore: new InMemoryRegistrationStore(),
 				}),
 			runStore: new InMemoryRunStore(),
 			runSubscribers: createRunSubscriberRegistry(),
@@ -506,8 +510,10 @@ describe('Bare /runs/:runId routes via flue()', () => {
 		expect(await original.text()).toBe('{"caseNumber":"02101282"}');
 	});
 
-	it('persists default workspace files by instance while harnesses remain isolated', async () => {
+	it('persists registered default workspace files by instance while harnesses remain isolated', async () => {
 		const workspaceStore = new InMemoryDefaultWorkspaceStore();
+		const registrationStore = new InMemoryRegistrationStore();
+		let hydrationRuns = 0;
 
 		configureFlueRuntime({
 			target: 'node',
@@ -517,9 +523,14 @@ describe('Bare /runs/:runId routes via flue()', () => {
 				hello: async (ctx) => {
 					const harnessName = String((ctx.payload as { harness?: string }).harness ?? 'default');
 					const harness = await ctx.init({ name: harnessName, model: false });
+					await ctx.register(async () => {
+						hydrationRuns += 1;
+						await harness.fs.writeFile('/hydrated.txt', `${ctx.id}:${harnessName}`);
+					});
 					const write = (ctx.payload as { write?: string }).write;
 					if (write) await harness.fs.writeFile('/workspace.txt', write);
 					return {
+						hydrated: await harness.fs.readFile('/hydrated.txt').catch(() => null),
 						value: await harness.fs.readFile('/workspace.txt').catch(() => null),
 					};
 				},
@@ -544,6 +555,7 @@ describe('Bare /runs/:runId routes via flue()', () => {
 						return bashFactoryToSessionEnv(async () => new Bash({ fs }));
 					},
 					defaultStore: new InMemorySessionStore(),
+					registrationStore,
 				}),
 		});
 
@@ -556,16 +568,107 @@ describe('Bare /runs/:runId routes via flue()', () => {
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify(payload),
 				}),
-			)).json() as Promise<{ result: { value: string | null } }>;
+			)).json() as Promise<{ result: { hydrated: string | null; value: string | null } }>;
 
-		expect((await invoke('stable', { write: 'persisted' })).result.value).toBe('persisted');
+		expect((await invoke('stable', { write: 'persisted' })).result).toEqual({
+			hydrated: 'stable:default',
+			value: 'persisted',
+		});
+		expect((await invoke('stable')).result.hydrated).toBe('stable:default');
 		expect((await invoke('stable')).result.value).toBe('persisted');
-		expect((await invoke('stable', { harness: 'other' })).result.value).toBeNull();
+		expect((await invoke('stable', { harness: 'other' })).result.hydrated).toBeNull();
 		expect((await invoke('stable', { harness: 'other', write: 'other-data' })).result.value).toBe(
 			'other-data',
 		);
 		expect((await invoke('stable', { harness: 'other' })).result.value).toBe('other-data');
-		expect((await invoke('isolated')).result.value).toBeNull();
+		expect((await invoke('isolated')).result.hydrated).toBe('isolated:default');
+		expect(hydrationRuns).toBe(2);
+	});
+
+	it('runs register once per instance, retries failures, and rejects a second call in one request', async () => {
+		const registrationStore = new InMemoryRegistrationStore();
+		const calls: string[] = [];
+		let shouldFail = true;
+
+		configureFlueRuntime({
+			target: 'node',
+			webhookAgents: ['hello'],
+			allowNonWebhook: false,
+			handlers: {
+				hello: async (ctx) => {
+					await ctx.register(async () => {
+						calls.push(ctx.id);
+						if (ctx.id === 'retry' && shouldFail) {
+							shouldFail = false;
+							throw new Error('registration failed');
+						}
+					});
+					if (ctx.id === 'double') {
+						await ctx.register(async () => undefined);
+					}
+					return { ok: true };
+				},
+			},
+			createContext: (agentName, id, runId, payload, req) =>
+				createFlueContext({
+					agentName,
+					id,
+					runId,
+					payload,
+					env: {},
+					req,
+					agentConfig: {
+						systemPrompt: '',
+						skills: {},
+						roles: {},
+						model: undefined,
+						resolveModel: () => undefined,
+					},
+					createDefaultEnv: async () => ({}) as never,
+					defaultStore: new InMemorySessionStore(),
+					registrationStore,
+				}),
+			runStore: new InMemoryRunStore(),
+			instanceAdmission: new InMemoryInstanceRunAdmission(),
+			runRegistry: new InMemoryRunRegistry(),
+			runSubscribers: createRunSubscriberRegistry(),
+		});
+
+		const app = new Hono();
+		app.route('/', flue());
+		const invoke = (id: string) =>
+			app.fetch(
+				new Request(`http://localhost/agents/hello/${id}`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({}),
+				}),
+			);
+
+		expect((await invoke('stable')).status).toBe(200);
+		expect((await invoke('stable')).status).toBe(200);
+		expect(calls).toEqual(['stable']);
+
+		expect((await invoke('retry')).status).toBe(500);
+		expect((await invoke('retry')).status).toBe(200);
+		expect((await invoke('retry')).status).toBe(200);
+		expect(calls).toEqual(['stable', 'retry', 'retry']);
+
+		const double = await invoke('double');
+		expect(double.status).toBe(500);
+	});
+
+	it('scopes registration completion by agent name and claims duplicate registrations once', async () => {
+		const registrationStore = new InMemoryRegistrationStore();
+		const first = { agentName: 'alpha', instanceId: 'shared' };
+		const duplicate = await Promise.all([
+			registrationStore.claim(first),
+			registrationStore.claim(first),
+		]);
+		expect(duplicate.filter(Boolean)).toHaveLength(1);
+		await duplicate.find(Boolean)?.complete();
+		expect(await registrationStore.claim(first)).toBeNull();
+		expect(await registrationStore.claim({ agentName: 'beta', instanceId: 'shared' })).toBeTruthy();
 	});
 
 	it('flushes queued non-terminal events before run_end is persisted', async () => {
@@ -600,6 +703,7 @@ describe('Bare /runs/:runId routes via flue()', () => {
 					},
 					createDefaultEnv: async () => ({}) as never,
 					defaultStore: new InMemorySessionStore(),
+					registrationStore: new InMemoryRegistrationStore(),
 				}),
 			runStore,
 			runRegistry,
@@ -690,6 +794,7 @@ describe('admin() routes', () => {
 					},
 					createDefaultEnv: async () => ({}) as never,
 					defaultStore: new InMemorySessionStore(),
+					registrationStore: new InMemoryRegistrationStore(),
 				}),
 			runStore,
 			runRegistry,

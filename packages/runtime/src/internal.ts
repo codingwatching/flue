@@ -31,6 +31,7 @@ export { parseSkillMarkdown } from './skill-frontmatter.ts';
 export { createDurableRunStore } from './cloudflare/run-store.ts';
 export { InMemoryDefaultWorkspaceStore } from './node/default-workspace-store.ts';
 export { InMemoryInstanceRunAdmission } from './node/instance-admission.ts';
+export { InMemoryRegistrationStore } from './node/registration-store.ts';
 export { InMemoryRunRegistry } from './node/run-registry.ts';
 export { InMemoryRunStore } from './node/run-store.ts';
 export type { FlueRuntime } from './runtime/flue-app.ts';
@@ -44,6 +45,11 @@ export type {
 	InstanceRunAdmission,
 	InstanceRunLease,
 } from './runtime/instance-admission.ts';
+export type {
+	RegistrationClaim,
+	RegistrationKey,
+	RegistrationStore,
+} from './runtime/registration-store.ts';
 export type {
 	AgentHandler,
 	CreateContextFn,

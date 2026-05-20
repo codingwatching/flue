@@ -104,6 +104,7 @@ import {
   InMemoryDefaultWorkspaceStore,
   InMemorySessionStore,
   InMemoryInstanceRunAdmission,
+  InMemoryRegistrationStore,
   InMemoryRunStore,
   createDurableRunStore,
   createRunSubscriberRegistry,
@@ -122,6 +123,7 @@ import {
   FlueRegistry,
   createCloudflareRunRegistry,
   createDurableDefaultWorkspaceStore,
+  createDurableRegistrationStore,
   createDurableInstanceRunAdmission,
   releaseDurableInstanceRunAdmission,
 } from '@flue/runtime/cloudflare';
@@ -210,6 +212,7 @@ function resolveSandbox(sandbox) {
 // Fallback in-memory store (used if no DO storage is available).
 const memoryWorkspaceStore = new InMemoryDefaultWorkspaceStore();
 const memoryStore = new InMemorySessionStore();
+const memoryRegistrationStore = new InMemoryRegistrationStore();
 const memoryInstanceAdmission = new InMemoryInstanceRunAdmission();
 const memoryRunStore = new InMemoryRunStore();
 
@@ -250,6 +253,9 @@ function createContextForRequest(agentName, id, runId, payload, doInstance, req)
   const defaultStore = sql
     ? createDOStore(sql)
     : memoryStore;
+  const registrationStore = sql
+    ? createDurableRegistrationStore(sql)
+    : memoryRegistrationStore;
 
   return createFlueContext({
     agentName,
@@ -263,6 +269,7 @@ function createContextForRequest(agentName, id, runId, payload, doInstance, req)
     },
     createDefaultEnv: (scope) => createDefaultEnv(scope, defaultWorkspaceStore),
     defaultStore,
+    registrationStore,
     resolveSandbox,
   });
 }

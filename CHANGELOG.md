@@ -12,6 +12,8 @@
 
 - **Persistent default virtual workspaces.** The built-in default sandbox now reuses filesystem state across runs for the same agent name, instance id, and harness name. Node keeps this workspace process-local; Cloudflare persists it in Durable Object SQLite storage. Custom sandboxes remain unchanged.
 
+- **One-time instance registration hooks.** Agent handlers can call `ctx.register(async () => { ... })` once per request to run setup once per agent instance. Successful registrations are skipped on later runs, failures are retried, Node stores completion state process-locally, and Cloudflare persists it in Durable Object SQLite storage.
+
 - **Cloudflare shell sandbox.** Added `getShellSandbox({ workspace, loader })`, `getDefaultWorkspace()`, and `hydrateFromBucket()` from `@flue/runtime/cloudflare`. The new sandbox wires `@cloudflare/shell` Workspaces into Flue through a codemode `code` tool backed by a Worker Loader binding. Agents use `state.*` inside the `code` tool instead of bash/read/write/grep/glob. Use `@cloudflare/shell` directly for primitives like `Workspace`, `WorkspaceFileSystem`, and `createGit`.
 
 ### Breaking Changes

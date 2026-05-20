@@ -13,7 +13,12 @@ export const triggers = { webhook: true };
  * (e.g. future cron / queue triggers). Today every trigger is HTTP, so in
  * practice it's always defined.
  */
-export default async function ({ req, init, payload }: FlueContext<{ delayMs?: number }>) {
+export default async function ({
+	req,
+	init,
+	payload,
+	register,
+}: FlueContext<{ delayMs?: number; seedWorkspace?: string; readWorkspace?: boolean }>) {
 	console.log('[with-request] method:', req?.method);
 	console.log('[with-request] url:', req?.url);
 	console.log('[with-request] user-agent:', req?.headers.get('user-agent'));
@@ -40,6 +45,19 @@ export default async function ({ req, init, payload }: FlueContext<{ delayMs?: n
 		await new Promise((resolve) => setTimeout(resolve, delayMs));
 	}
 
+	const harness = await init({ model: 'anthropic/claude-haiku-4-5' });
+	await register(async () => {
+		if (payload?.seedWorkspace) {
+			await harness.fs.writeFile('/registered-workspace.txt', payload.seedWorkspace);
+		}
+	});
+	if (payload?.readWorkspace) {
+		return {
+			skipped: true,
+			workspace: await harness.fs.readFile('/registered-workspace.txt').catch(() => null),
+		};
+	}
+
 	const authHeader = req?.headers.get('authorization');
 	if (!authHeader) {
 		console.log('[with-request] no authorization header — skipping LLM call');
@@ -47,7 +65,6 @@ export default async function ({ req, init, payload }: FlueContext<{ delayMs?: n
 	}
 
 	console.log('[with-request] authorization header present, proceeding');
-	const harness = await init({ model: 'anthropic/claude-haiku-4-5' });
 	const session = await harness.session();
 	const { text } = await session.prompt('Say hello in 5 words.');
 	return { skipped: false, text };

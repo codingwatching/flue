@@ -3,6 +3,7 @@ import { Harness } from './harness.ts';
 import { assertRoleExists } from './roles.ts';
 import type { DefaultWorkspaceScope } from './runtime/default-workspace-store.ts';
 import { dispatchGlobalEvent } from './runtime/events.ts';
+import type { RegistrationStore } from './runtime/registration-store.ts';
 import { bashFactoryToSessionEnv, createCwdSessionEnv, isBashLike } from './sandbox.ts';
 import type {
 	AgentConfig,
@@ -27,6 +28,7 @@ export interface FlueContextConfig {
 	agentConfig: AgentConfig;
 	createDefaultEnv: (scope: DefaultWorkspaceScope) => Promise<SessionEnv>;
 	defaultStore: SessionStore;
+	registrationStore: RegistrationStore;
 	/**
 	 * Platform-specific sandbox resolver hook. Called before default resolution.
 	 * Returns SessionEnv to use, or null to fall through to default logic.
@@ -52,6 +54,7 @@ export function createFlueContext(config: FlueContextConfig): FlueContextInterna
 	const subscribers = new Set<FlueEventCallback>();
 	let handlerUnsubscribe: (() => void) | undefined;
 	let eventIndex = 0;
+	let didRegister = false;
 	const initializedHarnessNames = new Set<string>();
 
 	const emitEvent = (event: FlueEvent): FlueEvent => {
@@ -110,6 +113,26 @@ export function createFlueContext(config: FlueContextConfig): FlueContextInterna
 			error(message, attributes) {
 				emitEvent({ type: 'log', level: 'error', message, attributes: normalizeLogAttributes(attributes) });
 			},
+		},
+
+		async register(callback: () => unknown | Promise<unknown>): Promise<void> {
+			if (typeof callback !== 'function') {
+				throw new Error('[flue] register() requires a callback function.');
+			}
+			if (didRegister) {
+				throw new Error('[flue] register() may only be called once per request.');
+			}
+			didRegister = true;
+			const registration = { agentName: config.agentName, instanceId: config.id };
+			const claim = await config.registrationStore.claim(registration);
+			if (!claim) return;
+			try {
+				await callback();
+				await claim.complete();
+			} catch (error) {
+				await claim.release();
+				throw error;
+			}
 		},
 
 		async init(options?: AgentInit): Promise<FlueHarness> {

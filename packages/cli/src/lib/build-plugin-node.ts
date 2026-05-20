@@ -55,6 +55,7 @@ import {
   InMemoryDefaultWorkspaceStore,
   InMemorySessionStore,
   InMemoryInstanceRunAdmission,
+  InMemoryRegistrationStore,
   InMemoryRunStore,
   InMemoryRunRegistry,
   createRunSubscriberRegistry,
@@ -104,6 +105,7 @@ async function createDefaultEnv(scope) {
 // Default persistence store for Node — in-memory, process lifetime.
 const defaultWorkspaceStore = new InMemoryDefaultWorkspaceStore();
 const defaultStore = new InMemorySessionStore();
+const registrationStore = new InMemoryRegistrationStore();
 const instanceAdmission = new InMemoryInstanceRunAdmission();
 const runStore = new InMemoryRunStore();
 const runRegistry = new InMemoryRunRegistry();
@@ -122,6 +124,7 @@ function createContextForRequest(agentName, id, runId, payload, req) {
     },
     createDefaultEnv,
     defaultStore,
+    registrationStore,
   });
 }
 
