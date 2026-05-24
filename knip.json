@@ -1,0 +1,18 @@
+{
+	"$schema": "https://unpkg.com/knip@6/schema.json",
+	"ignoreDependencies": ["@cloudflare/sandbox", "@flue/cli", "agents", "wrangler"],
+	"ignoreIssues": {
+		"packages/runtime/src/runtime/schemas.ts": ["duplicates"]
+	},
+	"workspaces": {
+		".": {
+			"entry": [".flue/{app,agents/*,workflows/*,channels/*}.{ts,mts,js,mjs}"],
+			"project": [".flue/**/*.{ts,mts,js,mjs}"],
+			"ignoreDependencies": ["bgproc", "just-bash"]
+		},
+		"examples/*": {
+			"entry": [".flue/{app,agents/*,workflows/*,channels/*}.{ts,mts,js,mjs}"],
+			"project": [".flue/**/*.{ts,mts,js,mjs}"]
+		}
+	}
+}
