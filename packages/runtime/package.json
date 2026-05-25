@@ -51,6 +51,7 @@
 		"check:types": "tsc --noEmit",
 		"test": "vitest run",
 		"test:integration:cloudflare": "vitest run --config vitest.integration.cloudflare.config.ts --no-file-parallelism",
+		"test:integration:release": "pnpm run build && pnpm --dir ../cli run build && vitest run --config vitest.integration.release.config.ts --no-file-parallelism",
 		"test:watch": "vitest",
 		"prepublishOnly": "cp ../../README.md ."
 	},

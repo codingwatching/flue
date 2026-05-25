@@ -1,0 +1,14 @@
+{
+	"name": "imported-skill-example",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"@flue/runtime": "workspace:*",
+		"agents": "*",
+		"just-bash": "^3.0.1"
+	},
+	"devDependencies": {
+		"@flue/cli": "workspace:*",
+		"wrangler": "^4.94.0"
+	}
+}
