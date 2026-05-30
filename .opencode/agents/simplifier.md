@@ -4,7 +4,7 @@ mode: all
 temperature: 0.1
 permission:
   edit: allow
-  bash: ask
+  bash: allow
   task: deny
 ---
 
