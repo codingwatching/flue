@@ -14,7 +14,9 @@ import {
   createAgent,
   defineAgentProfile,
   defineTool,
+  dispatch,
   type AgentCreateContext,
+  type AgentDispatchRequest,
   type AgentHarnessOptions,
   type AgentProfile,
   type AgentRuntimeConfig,
@@ -22,6 +24,7 @@ import {
   type CallHandle,
   type CompactionConfig,
   type CreatedAgent,
+  type DispatchReceipt,
   type FileStat,
   type FlueContext,
   type FlueFs,
@@ -30,6 +33,7 @@ import {
   type FlueSessions,
   type McpServerConnection,
   type McpServerOptions,
+  type NamedAgentDispatchRequest,
   type PromptImage,
   type PromptModel,
   type PromptOptions,
@@ -205,6 +209,44 @@ The initializer runs whenever the runtime initializes a harness from the created
 #### `CreatedAgent`
 
 `CreatedAgent` is the opaque initializer value returned by `createAgent()`.
+
+## `dispatch(...)`
+
+```ts
+function dispatch(agent: CreatedAgent, request: AgentDispatchRequest): Promise<DispatchReceipt>;
+
+function dispatch(request: NamedAgentDispatchRequest): Promise<DispatchReceipt>;
+
+interface AgentDispatchRequest {
+  id: string;
+  session?: string;
+  input: unknown;
+}
+
+interface NamedAgentDispatchRequest extends AgentDispatchRequest {
+  agent: string;
+}
+
+interface DispatchReceipt {
+  dispatchId: string;
+  acceptedAt: string;
+}
+```
+
+Accepts input for asynchronous delivery to a continuing agent session. The created-agent overload requires a value default-exported by one discovered `agents/<name>.ts` module. The named overload selects a discovered agent module by name.
+
+| Field        | Description                                                                                               |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| `agent`      | Discovered agent module name for the named overload.                                                      |
+| `id`         | Target agent instance id.                                                                                 |
+| `session`    | Target session name. Defaults to `'default'`.                                                             |
+| `input`      | Required JSON-like payload. Use `null` for an intentional empty payload. Flue snapshots it when accepted. |
+| `dispatchId` | Generated delivery identifier returned in the receipt. This is not a workflow `runId`.                    |
+| `acceptedAt` | ISO timestamp assigned when dispatch admission begins.                                                    |
+
+`await dispatch(...)` resolves when the current runtime accepts and queues the input. It does not wait for model processing, tool calls, or an agent reply. Dispatched activity belongs to the continuing agent session: it does not create workflow-run history and does not appear in `/runs` or `flue logs`.
+
+Delivery durability depends on the generated target. Node uses a process-lifetime in-memory queue by default. Cloudflare durably admits delivery to the target agent Durable Object and may retry processing after an interruption. Design external side effects to be idempotent. See [Deploy Agents on Node.js](/docs/ecosystem/deploy/node/) and [Deploy Agents on Cloudflare](/docs/ecosystem/deploy/cloudflare/).
 
 ## `init(...)`
 

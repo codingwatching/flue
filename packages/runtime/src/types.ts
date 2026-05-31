@@ -10,18 +10,30 @@ export type AgentWebSocketHandler = MiddlewareHandler;
 export type WorkflowRouteHandler = MiddlewareHandler;
 export type WorkflowWebSocketHandler = MiddlewareHandler;
 
+/** Input accepted by the created-agent overload of `dispatch(...)`. */
 export interface AgentDispatchRequest {
+	/** Target agent instance id. Must be a non-empty string. */
 	id: string;
+	/** Target session name. Defaults to `'default'`. */
 	session?: string;
+	/**
+	 * JSON-like input delivered to the session. Required; use `null` for an
+	 * intentional empty payload. Flue snapshots the value at admission time.
+	 */
 	input: unknown;
 }
 
+/** Input accepted by the named-agent overload of `dispatch(...)`. */
 export interface NamedAgentDispatchRequest extends AgentDispatchRequest {
+	/** Discovered agent module name. Must be a non-empty string. */
 	agent: string;
 }
 
+/** Receipt returned after a dispatched input is accepted for delivery. */
 export interface DispatchReceipt {
+	/** Generated delivery identifier. This is not a workflow `runId`. */
 	dispatchId: string;
+	/** ISO timestamp assigned when dispatch admission begins. */
 	acceptedAt: string;
 }
 

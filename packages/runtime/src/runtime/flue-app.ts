@@ -155,6 +155,24 @@ const RUN_ROUTES_BY_ID: ReadonlyArray<readonly [string, HandleRunRouteOptions['a
 	['/runs/:runId/stream', 'stream'],
 ];
 
+/**
+ * Accepts input for asynchronous delivery to a continuing agent session.
+ *
+ * Resolves after the current runtime admits and queues the input. It does not
+ * wait for model processing, tool calls, or an agent reply. The returned
+ * `dispatchId` identifies delivery and is not a workflow `runId`; dispatched
+ * input does not create workflow-run history.
+ *
+ * The created-agent overload requires a value default-exported by exactly one
+ * discovered `agents/<name>.ts` module. The named overload targets a discovered
+ * agent module by name.
+ *
+ * Delivery durability depends on the generated target. Node uses a
+ * process-lifetime in-memory queue by default. Cloudflare durably admits work
+ * to the target agent Durable Object and may retry processing after an
+ * interruption. Cloudflare processing can therefore be at-least-once; design
+ * external side effects to be idempotent.
+ */
 export function dispatch(agent: CreatedAgent, request: AgentDispatchRequest): Promise<DispatchReceipt>;
 export function dispatch(request: NamedAgentDispatchRequest): Promise<DispatchReceipt>;
 export async function dispatch(
