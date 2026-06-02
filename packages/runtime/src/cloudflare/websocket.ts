@@ -132,7 +132,6 @@ export async function messageCloudflareAgentWebSocket(
 		send(connection, { version: 1, type: 'pong', requestId: message.requestId });
 		return;
 	}
-	await options.beforePrompt?.(message.session ?? 'default');
 	await invokeAgentPrompt(connection, message, options);
 }
 
@@ -187,6 +186,7 @@ async function invokeAgentPrompt(
 ): Promise<void> {
 	let didStart = false;
 	try {
+		await options.beforePrompt?.(message.session ?? 'default');
 		const result = await invokeDirectAttached({
 			agentName: options.name,
 			id: options.id,
