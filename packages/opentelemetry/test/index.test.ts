@@ -205,6 +205,177 @@ describe('createOpenTelemetryObserver', () => {
 		expect(tracer.spans.every((span) => span.ended)).toBe(true);
 	});
 
+	it('exports scoped event indexes and compaction usage rollups without changing model turn leaf usage', () => {
+		const tracer = new RecordingTracer();
+		const observe = createOpenTelemetryObserver({ tracer: tracer as never });
+		observe(
+			{
+				type: 'run_start',
+				runId: 'run-1',
+				owner: { kind: 'workflow', workflowName: 'report', instanceId: 'run-1' },
+				instanceId: 'run-1',
+				workflowName: 'report',
+				startedAt: '2026-05-27T00:00:00.000Z',
+				payload: {},
+				eventIndex: 0,
+				timestamp: '2026-05-27T00:00:00.000Z',
+			},
+			{} as never,
+		);
+		observe(
+			{
+				type: 'operation_start',
+				runId: 'run-1',
+				operationId: 'op-1',
+				operationKind: 'prompt',
+				eventIndex: 1,
+				timestamp: '2026-05-27T00:00:00.010Z',
+			},
+			{} as never,
+		);
+		observe(
+			{
+				type: 'compaction_start',
+				runId: 'run-1',
+				operationId: 'op-1',
+				reason: 'threshold',
+				estimatedTokens: 10_000,
+				eventIndex: 2,
+				timestamp: '2026-05-27T00:00:00.020Z',
+			},
+			{} as never,
+		);
+		observe(
+			{
+				type: 'turn_request',
+				runId: 'run-1',
+				operationId: 'op-1',
+				turnId: 'turn-1',
+				purpose: 'compaction',
+				model: 'sonnet',
+				provider: 'anthropic',
+				api: 'messages',
+				input: { messages: [] },
+				eventIndex: 3,
+				timestamp: '2026-05-27T00:00:00.030Z',
+			},
+			{} as never,
+		);
+		observe(
+			{
+				type: 'turn',
+				runId: 'run-1',
+				operationId: 'op-1',
+				turnId: 'turn-1',
+				purpose: 'compaction',
+				durationMs: 10,
+				isError: false,
+				usage: {
+					input: 2,
+					output: 3,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 5,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.01 },
+				},
+				eventIndex: 4,
+				timestamp: '2026-05-27T00:00:00.040Z',
+			},
+			{} as never,
+		);
+		observe(
+			{
+				type: 'compaction',
+				runId: 'run-1',
+				operationId: 'op-1',
+				messagesBefore: 12,
+				messagesAfter: 3,
+				durationMs: 20,
+				usage: {
+					input: 2,
+					output: 3,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 5,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.01 },
+				},
+				eventIndex: 5,
+				timestamp: '2026-05-27T00:00:00.050Z',
+			},
+			{} as never,
+		);
+		observe(
+			{
+				type: 'log',
+				runId: 'run-1',
+				operationId: 'op-1',
+				level: 'info',
+				message: 'Compacted',
+				eventIndex: 6,
+				timestamp: '2026-05-27T00:00:00.060Z',
+			},
+			{} as never,
+		);
+		observe(
+			{
+				type: 'operation',
+				runId: 'run-1',
+				operationId: 'op-1',
+				operationKind: 'prompt',
+				durationMs: 60,
+				isError: false,
+				eventIndex: 7,
+				timestamp: '2026-05-27T00:00:00.070Z',
+			},
+			{} as never,
+		);
+		observe(
+			{
+				type: 'run_end',
+				runId: 'run-1',
+				durationMs: 70,
+				isError: false,
+				eventIndex: 8,
+				timestamp: '2026-05-27T00:00:00.080Z',
+			},
+			{} as never,
+		);
+
+		expect(tracer.spans.map((span) => span.name)).toEqual([
+			'flue.workflow report',
+			'flue.operation prompt',
+			'flue.compaction',
+			'gen_ai.generate',
+		]);
+		expect(tracer.spans[0]?.attributes).toMatchObject({
+			'flue.event.start_index': 0,
+			'flue.event.end_index': 8,
+		});
+		expect(tracer.spans[1]?.attributes).toMatchObject({
+			'flue.event.start_index': 1,
+			'flue.event.end_index': 7,
+		});
+		expect(tracer.spans[1]?.events).toEqual([
+			{ name: 'flue.log', attributes: { 'flue.log.level': 'info', 'flue.event.index': 6 } },
+		]);
+		expect(tracer.spans[2]?.attributes).toMatchObject({
+			'flue.event.start_index': 2,
+			'flue.event.end_index': 5,
+			'flue.compaction.usage.input_tokens': 2,
+			'flue.compaction.usage.output_tokens': 3,
+			'flue.compaction.usage.total_tokens': 5,
+			'flue.compaction.usage.cost_total': 0.01,
+		});
+		expect(tracer.spans[3]?.attributes).toMatchObject({
+			'flue.event.start_index': 3,
+			'flue.event.end_index': 4,
+			'gen_ai.usage.input_tokens': 2,
+			'gen_ai.usage.output_tokens': 3,
+			'gen_ai.usage.total_tokens': 5,
+			'gen_ai.usage.cost_total': 0.01,
+		});
+	});
+
 	it('uses a resolved parent context for workflow roots without changing nested span parenting', () => {
 		const tracer = new RecordingTracer();
 		const parent = new RecordingSpan('application.request', undefined, undefined);

@@ -105,6 +105,8 @@ Workflow and standalone operation spans start as independent roots by default. T
 
 The adapter exports metadata and generic failure messages by default. To export content, pass an application-owned `sanitize(event)` callback. It receives a shallow event copy; return a sanitized event to export its supported content values, or return `undefined` to omit content from that event. Passing `sanitize: (event) => event` intentionally exports unsanitized content and is useful only when the configured exporter is appropriate for that data.
 
+Exported event indexes can correlate trace activity with workflow history when persistence succeeds. For direct and dispatched agent activity, indexes are live per-context ordering values only; `dispatchId` remains the delivery identity for dispatched input. When aggregating model usage, sum model-turn leaf values rather than operation or compaction roll-ups. Nested duration values describe overlapping elapsed intervals and should not be summed.
+
 Start with signals that describe outcomes: failed workflows, explicit application error logs, slow operations, and completed model usage. A model turn or tool call may fail before an agent recovers, so treating every nested error as an incident can create noisy alerts.
 
 Telemetry can include sensitive application and model data, including workflow payloads, terminal errors, log attributes, prompts, output, reasoning-bearing content, image bytes, and tool arguments or results. Prefer exporting timing, failure state, token, and cost metadata unless content is necessary for your investigation. If you export content or write your own observer, redact secrets and personal data before sending events to an external service.

@@ -167,7 +167,7 @@ export function createOpenTelemetryObserver(
 			const span = tools.get(toolKey(event));
 			if (!span) return;
 			const exportedEvent = sanitizeEvent(sanitize, event);
-			span.setAttribute('flue.duration_ms', event.durationMs);
+			span.setAttributes({ 'flue.duration_ms': event.durationMs, ...eventIndexAttribute('end', event) });
 			setContentAttribute(span, 'flue.tool.result', exportedEvent?.result);
 			complete(span, event.isError, exportedEvent?.result, 'Tool call failed.', time);
 			tools.delete(toolKey(event));
@@ -179,6 +179,7 @@ export function createOpenTelemetryObserver(
 			const exportedEvent = sanitizeEvent(sanitize, event);
 			span.setAttributes({
 				'flue.duration_ms': event.durationMs,
+				...eventIndexAttribute('end', event),
 				...(event.model ? { 'gen_ai.response.model': event.model } : {}),
 				...(event.provider ? { 'gen_ai.provider.name': event.provider } : {}),
 				...(event.api ? { 'flue.provider.api': event.api } : {}),
@@ -196,8 +197,10 @@ export function createOpenTelemetryObserver(
 			if (!span) return;
 			span.setAttributes({
 				'flue.duration_ms': event.durationMs,
+				...eventIndexAttribute('end', event),
 				'flue.compaction.messages_before': event.messagesBefore,
 				'flue.compaction.messages_after': event.messagesAfter,
+				...usageAttributes(event.usage, 'flue.compaction.usage'),
 			});
 			span.end(time);
 			compactions.delete(key);
@@ -207,7 +210,7 @@ export function createOpenTelemetryObserver(
 			const span = tasks.get(event.taskId);
 			if (!span) return;
 			const exportedEvent = sanitizeEvent(sanitize, event);
-			span.setAttribute('flue.duration_ms', event.durationMs);
+			span.setAttributes({ 'flue.duration_ms': event.durationMs, ...eventIndexAttribute('end', event) });
 			setContentAttribute(span, 'flue.task.result', exportedEvent?.result);
 			complete(span, event.isError, exportedEvent?.result, 'Task failed.', time);
 			tasks.delete(event.taskId);
@@ -224,6 +227,7 @@ export function createOpenTelemetryObserver(
 				'flue.log',
 				{
 					'flue.log.level': event.level,
+					...eventIndexAttribute('index', event),
 					...contentAttribute('flue.log.message', exportedEvent?.message),
 					...contentAttribute('flue.log.attributes', exportedEvent?.attributes),
 				},
@@ -237,6 +241,7 @@ export function createOpenTelemetryObserver(
 			const exportedEvent = sanitizeEvent(sanitize, event);
 			span.setAttributes({
 				'flue.duration_ms': event.durationMs,
+				...eventIndexAttribute('end', event),
 				...usageAttributes(event.usage, 'flue.operation.usage'),
 			});
 			setContentAttribute(span, 'flue.operation.result', exportedEvent?.result);
@@ -258,12 +263,12 @@ export function createOpenTelemetryObserver(
 			const span = runs.get(event.runId);
 			if (!span) return;
 			const exportedEvent = sanitizeEvent(sanitize, event);
-			span.setAttribute(
-				recoveryHandledRuns.has(event.runId)
+			span.setAttributes({
+				[recoveryHandledRuns.has(event.runId)
 					? 'flue.workflow.total_duration_ms'
-					: 'flue.duration_ms',
-				event.durationMs,
-			);
+					: 'flue.duration_ms']: event.durationMs,
+				...eventIndexAttribute('end', event),
+			});
 			setContentAttribute(span, 'flue.workflow.result', exportedEvent?.result);
 			complete(span, event.isError, exportedEvent?.error, 'Workflow run failed.', time);
 			runs.delete(event.runId);
@@ -284,7 +289,15 @@ function startSpan(
 	const parentContext = parent
 		? trace.setSpan(context.active(), parent)
 		: resolveRootContext?.(event, ctx);
-	return tracer.startSpan(name, { ...options, root: parentContext === undefined }, parentContext);
+	return tracer.startSpan(
+		name,
+		{
+			...options,
+			root: parentContext === undefined,
+			attributes: { ...options.attributes, ...eventIndexAttribute('start', event) },
+		},
+		parentContext,
+	);
 }
 
 function workflowSpan(event: FlueEvent, runs: Map<string, Span>): Span | undefined {
@@ -317,6 +330,11 @@ function identifiers(event: FlueEvent): Attributes {
 			'flue.turn.id': event.turnId,
 		}).filter((entry): entry is [string, string] => entry[1] !== undefined),
 	);
+}
+
+function eventIndexAttribute(scope: 'start' | 'end' | 'index', event: FlueEvent): Attributes {
+	if (event.eventIndex === undefined) return {};
+	return { [scope === 'index' ? 'flue.event.index' : `flue.event.${scope}_index`]: event.eventIndex };
 }
 
 function usageAttributes(
