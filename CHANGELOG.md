@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.2 - 2026-06-03
+
+### New Features
+
+- **Activate matching skills autonomously.** Sessions with configured skills now expose an `activate_skill` tool so agents can load full skill instructions on demand before performing matching work. Workspace skills are reread when activated, preserving lazy loading and picking up edits made during an active session.
+
 ## 0.9.1 - 2026-06-02
 
 ### Fixes & Other Changes

@@ -25,10 +25,6 @@ export interface TaskToolResultDetails {
 	cwd?: string;
 }
 
-export interface ActivateSkillToolParams {
-	name: string;
-}
-
 export interface CreateToolsOptions {
 	task?: (
 		params: TaskToolParams,
@@ -328,7 +324,7 @@ export function createActivateSkillTool(
 	const sortedNames = [...skillNames].sort();
 	const NameSchema =
 		sortedNames.length === 1
-			? Type.Literal(sortedNames[0]!)
+			? Type.Literal(sortedNames[0] ?? '')
 			: Type.Union(sortedNames.map((name) => Type.Literal(name)));
 	const ActivateSkillParams = Type.Object({
 		name: NameSchema,
