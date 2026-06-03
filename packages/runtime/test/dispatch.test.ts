@@ -9,12 +9,14 @@ import { dispatch, observe } from '../src/index.ts';
 import {
 	configureFlueRuntime,
 	createAgentDispatchProcessor,
+	createDispatchAgentHandler,
+	createDispatchInputInspectionHandler,
 	createFlueContext,
 	type DispatchInput,
 	InMemoryDispatchQueue,
-	validateAgentDispatchAdmission,
 	InMemorySessionStore,
 	resetFlueRuntimeForTests,
+	validateAgentDispatchAdmission,
 } from '../src/internal.ts';
 import type { AgentConfig, FlueHarness, FlueSession } from '../src/types.ts';
 import { createNoopSessionEnv } from './fixtures/session-env.ts';
@@ -506,6 +508,170 @@ describe('dispatched session processing', () => {
 			source: 'dispatch',
 			dispatch: { dispatchId: 'dispatch:retry-idempotent' },
 		});
+	});
+
+	it('marks input application after configured persistence and before model processing begins', async () => {
+		const order: string[] = [];
+		const provider = createProvider();
+		provider.setResponses([
+			() => {
+				order.push('provider');
+				return fauxAssistantMessage('processed after marker');
+			},
+		]);
+		const store = new InMemorySessionStore();
+		const originalSave = store.save.bind(store);
+		store.save = async (id, data) => {
+			if (data.entries.some((entry) => entry.type === 'message' && entry.dispatch?.dispatchId === 'dispatch:input-marker-order')) {
+				order.push('persist-input');
+			}
+			await originalSave(id, data);
+		};
+		const agent = createAgent(() => ({
+			model: `${provider.getModel().provider}/${provider.getModel().id}`,
+			persist: store,
+		}));
+		const input: DispatchInput = {
+			dispatchId: 'dispatch:input-marker-order',
+			agent: 'moderator',
+			id: 'guild:input-marker-order',
+			session: 'case:input-marker-order',
+			input: { type: 'flagged', reportId: 'report:input-marker-order' },
+			acceptedAt: '2026-06-01T00:00:00.000Z',
+		};
+		const ctx = createFlueContext({
+			id: input.id,
+			dispatchId: input.dispatchId,
+			payload: input,
+			env: {},
+			req: new Request('http://flue.local/_dispatch', { method: 'POST' }),
+			agentConfig: {
+				systemPrompt: '',
+				skills: {},
+				subagents: {},
+				model: undefined,
+				resolveModel: () => provider.getModel(),
+			},
+			createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
+			defaultStore: new InMemorySessionStore(),
+		});
+
+		await createDispatchAgentHandler(agent, input, {
+			onInputApplied: () => {
+				order.push('input-applied');
+			},
+		})(ctx);
+
+		expect(order.indexOf('persist-input')).toBeLessThan(order.indexOf('input-applied'));
+		expect(order.indexOf('input-applied')).toBeLessThan(order.indexOf('provider'));
+	});
+
+	it('classifies a completed canonical dispatch response without model replay', async () => {
+		const provider = createProvider();
+		const store = new InMemorySessionStore();
+		const input: DispatchInput = {
+			dispatchId: 'dispatch:inspect-completed',
+			agent: 'moderator',
+			id: 'guild:inspect-completed',
+			session: 'case:inspect-completed',
+			input: { type: 'flagged', reportId: 'report:inspect-completed' },
+			acceptedAt: '2026-06-01T00:00:00.000Z',
+		};
+		const timestamp = '2026-06-01T00:00:00.000Z';
+		await store.save(`agent-session:${JSON.stringify([input.id, 'default', input.session])}`, {
+			version: 5,
+			affinityKey: 'aff_01KT3P3GZGFBCKHKMQ11A7H2HW',
+			entries: [
+				{
+					type: 'message',
+					id: 'dispatch-input',
+					parentId: null,
+					timestamp,
+					message: { role: 'user', content: [{ type: 'text', text: 'persisted dispatch' }], timestamp: 0 },
+					source: 'dispatch',
+					dispatch: input,
+				},
+				{
+					type: 'message',
+					id: 'assistant-response',
+					parentId: 'dispatch-input',
+					timestamp,
+					message: fauxAssistantMessage('persisted response'),
+					source: 'dispatch',
+				},
+			],
+			leafId: 'assistant-response',
+			metadata: {},
+			createdAt: timestamp,
+			updatedAt: timestamp,
+		});
+		const agent = createAgent(() => ({
+			model: `${provider.getModel().provider}/${provider.getModel().id}`,
+			persist: store,
+		}));
+		const ctx = createFlueContext({
+			id: input.id,
+			dispatchId: input.dispatchId,
+			payload: input,
+			env: {},
+			req: new Request('http://flue.local/_dispatch', { method: 'POST' }),
+			agentConfig: testAgentConfig(),
+			createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
+			defaultStore: new InMemorySessionStore(),
+		});
+
+		await expect(createDispatchInputInspectionHandler(agent, input)(ctx)).resolves.toBe('completed');
+		expect(provider.state.callCount).toBe(0);
+	});
+
+	it('classifies an incomplete canonical dispatch response without model replay', async () => {
+		const provider = createProvider();
+		const store = new InMemorySessionStore();
+		const input: DispatchInput = {
+			dispatchId: 'dispatch:inspect-applied',
+			agent: 'moderator',
+			id: 'guild:inspect-applied',
+			session: 'case:inspect-applied',
+			input: { type: 'flagged', reportId: 'report:inspect-applied' },
+			acceptedAt: '2026-06-01T00:00:00.000Z',
+		};
+		const timestamp = '2026-06-01T00:00:00.000Z';
+		await store.save(`agent-session:${JSON.stringify([input.id, 'default', input.session])}`, {
+			version: 5,
+			affinityKey: 'aff_01KT3P3GZGFBCKHKMQ11A7H2HW',
+			entries: [
+				{
+					type: 'message',
+					id: 'dispatch-input',
+					parentId: null,
+					timestamp,
+					message: { role: 'user', content: [{ type: 'text', text: 'persisted dispatch' }], timestamp: 0 },
+					source: 'dispatch',
+					dispatch: input,
+				},
+			],
+			leafId: 'dispatch-input',
+			metadata: {},
+			createdAt: timestamp,
+			updatedAt: timestamp,
+		});
+		const agent = createAgent(() => ({
+			model: `${provider.getModel().provider}/${provider.getModel().id}`,
+			persist: store,
+		}));
+		const ctx = createFlueContext({
+			id: input.id,
+			dispatchId: input.dispatchId,
+			payload: input,
+			env: {},
+			req: new Request('http://flue.local/_dispatch', { method: 'POST' }),
+			agentConfig: testAgentConfig(),
+			createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
+			defaultStore: new InMemorySessionStore(),
+		});
+
+		await expect(createDispatchInputInspectionHandler(agent, input)(ctx)).resolves.toBe('applied');
+		expect(provider.state.callCount).toBe(0);
 	});
 
 	it('continues a persisted transient failure when the same dispatch id is replayed', async () => {

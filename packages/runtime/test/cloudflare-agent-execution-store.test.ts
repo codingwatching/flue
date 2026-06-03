@@ -105,6 +105,7 @@ describe('createSqlAgentExecutionStore()', () => {
 			{ name: 'accepted_at' },
 			{ name: 'attempt_id' },
 			{ name: 'input_applied_at' },
+			{ name: 'recovery_requested_at' },
 			{ name: 'started_at' },
 			{ name: 'completed_at' },
 			{ name: 'error' },
@@ -120,6 +121,33 @@ describe('createSqlAgentExecutionStore()', () => {
 			{ name: 'flue_agent_submissions_status_sequence_idx' },
 			{ name: 'sqlite_autoindex_flue_agent_submissions_1' },
 		]);
+	});
+
+	it('adds recovery columns when an existing submission table predates the current schema', () => {
+		const { db, sql, transactionSync } = makeFakeSql();
+		db.exec(`CREATE TABLE flue_agent_submissions (
+		 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+		 submission_id TEXT NOT NULL UNIQUE,
+		 session TEXT NOT NULL,
+		 session_key TEXT NOT NULL,
+		 kind TEXT NOT NULL,
+		 payload TEXT NOT NULL,
+		 status TEXT NOT NULL,
+		 accepted_at INTEGER NOT NULL,
+		 attempt_id TEXT,
+		 started_at INTEGER,
+		 completed_at INTEGER,
+		 error TEXT
+		)`);
+
+		createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
+
+		expect(
+			db.prepare("SELECT name FROM pragma_table_info('flue_agent_submissions') ORDER BY cid").all(),
+		).toContainEqual({ name: 'input_applied_at' });
+		expect(
+			db.prepare("SELECT name FROM pragma_table_info('flue_agent_submissions') ORDER BY cid").all(),
+		).toContainEqual({ name: 'recovery_requested_at' });
 	});
 
 	it('admits one queued dispatch row when the same submission is replayed', () => {
@@ -211,6 +239,22 @@ describe('createSqlAgentExecutionStore()', () => {
 		).toMatchObject({ status: 'error', error: expect.any(String) });
 	});
 
+	it('terminalizes impossible queued input markers instead of replaying them', () => {
+		const { db, sql, transactionSync } = makeFakeSql();
+		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
+		store.submissions.admitDispatch(dispatchInput());
+		db.prepare('UPDATE flue_agent_submissions SET input_applied_at = ? WHERE submission_id = ?').run(
+			1,
+			'dispatch-1',
+		);
+
+		expect(store.submissions.listRunnableDispatches()).toEqual([]);
+		expect(store.submissions.getDispatch('dispatch-1')).toMatchObject({
+			status: 'error',
+			error: expect.any(String),
+		});
+	});
+
 	it('adopts legacy dispatches ahead of existing SQL submissions in historical order', () => {
 		const { sql, transactionSync } = makeFakeSql();
 		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
@@ -245,20 +289,45 @@ describe('createSqlAgentExecutionStore()', () => {
 		]);
 	});
 
-	it('rotates recovered attempt ownership without allowing a stale attempt to settle', () => {
+	it('records input application and recovery requests only for the owning running attempt', () => {
 		const { sql, transactionSync } = makeFakeSql();
 		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
 		store.submissions.admitDispatch(dispatchInput());
 		store.submissions.claimDispatch('dispatch-1', 'attempt-1');
 
-		const recovered = store.submissions.recoverDispatchAttempt('dispatch-1', 'attempt-1', 'attempt-2');
-		store.submissions.completeDispatch('dispatch-1', 'attempt-1');
+		const applied = store.submissions.markDispatchInputApplied('dispatch-1', 'attempt-1');
+		const replay = store.submissions.markDispatchInputApplied('dispatch-1', 'attempt-1');
+		const staleApplied = store.submissions.markDispatchInputApplied('dispatch-1', 'stale-attempt');
+		const recovery = store.submissions.requestDispatchRecovery('dispatch-1', 'attempt-1');
+		const staleRecovery = store.submissions.requestDispatchRecovery('dispatch-1', 'stale-attempt');
 
-		expect(recovered).toMatchObject({ status: 'running', attemptId: 'attempt-2' });
-		expect(store.submissions.getDispatch('dispatch-1')).toMatchObject({
+		expect(applied).toMatchObject({
 			status: 'running',
-			attemptId: 'attempt-2',
+			attemptId: 'attempt-1',
+			inputAppliedAt: expect.any(Number),
 		});
+		expect(replay?.inputAppliedAt).toBe(applied?.inputAppliedAt);
+		expect(staleApplied).toBeNull();
+		expect(recovery).toMatchObject({ recoveryRequestedAt: expect.any(Number) });
+		expect(staleRecovery).toBeNull();
+	});
+
+	it('requeues interrupted attempts only before canonical input application', () => {
+		const { sql, transactionSync } = makeFakeSql();
+		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
+		store.submissions.admitDispatch(dispatchInput({ dispatchId: 'requeue-safe' }));
+		store.submissions.admitDispatch(dispatchInput({ dispatchId: 'requeue-unsafe', session: 'other' }));
+		store.submissions.claimDispatch('requeue-safe', 'attempt-safe');
+		store.submissions.claimDispatch('requeue-unsafe', 'attempt-unsafe');
+		store.submissions.markDispatchInputApplied('requeue-unsafe', 'attempt-unsafe');
+
+		const safe = store.submissions.requeueDispatchBeforeInputApplied('requeue-safe', 'attempt-safe');
+		const unsafe = store.submissions.requeueDispatchBeforeInputApplied('requeue-unsafe', 'attempt-unsafe');
+
+		expect(safe).toMatchObject({ status: 'queued' });
+		expect(safe).not.toHaveProperty('attemptId');
+		expect(unsafe).toBeNull();
+		expect(store.submissions.getDispatch('requeue-unsafe')).toMatchObject({ status: 'running' });
 	});
 
 	it('reports unsettled session visibility until a claimed dispatch completes', () => {

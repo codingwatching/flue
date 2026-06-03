@@ -82,6 +82,7 @@ export {
 	createAgentDispatchProcessor,
 	createDirectAgentHandler,
 	createDispatchAgentHandler,
+	createDispatchInputInspectionHandler,
 	failRecoveredRun,
 	handleAgentRequest,
 	handleWorkflowRequest,

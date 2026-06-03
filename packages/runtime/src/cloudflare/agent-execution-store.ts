@@ -28,6 +28,8 @@ export interface SqlAgentDispatchSubmission {
 	readonly status: SqlAgentSubmissionStatus;
 	readonly acceptedAt: number;
 	readonly attemptId?: string;
+	readonly inputAppliedAt?: number;
+	readonly recoveryRequestedAt?: number;
 	readonly startedAt?: number;
 	readonly completedAt?: number;
 	readonly error?: string;
@@ -43,10 +45,11 @@ export interface SqlAgentSubmissionStore {
 	listRunningDispatches(): SqlAgentDispatchSubmission[];
 	hasUnsettledDispatchForSession(instanceId: string, session: string): boolean;
 	claimDispatch(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null;
-	recoverDispatchAttempt(
+	markDispatchInputApplied(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null;
+	requestDispatchRecovery(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null;
+	requeueDispatchBeforeInputApplied(
 		submissionId: string,
-		expectedAttemptId: string,
-		nextAttemptId: string,
+		attemptId: string,
 	): SqlAgentDispatchSubmission | null;
 	completeDispatch(submissionId: string, attemptId: string): void;
 	failDispatch(submissionId: string, attemptId: string, error: unknown): void;
@@ -227,7 +230,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			this.sql
 				.exec(
 					`SELECT sequence, submission_id, session, session_key, kind, payload, status,
-					        accepted_at, attempt_id, started_at, completed_at, error
+					        accepted_at, attempt_id, input_applied_at, recovery_requested_at, started_at, completed_at, error
 					 FROM flue_agent_submissions
 					 WHERE kind = 'dispatch' AND status = 'queued'
 					 ORDER BY sequence ASC`,
@@ -241,7 +244,8 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			.exec(
 				`SELECT current.sequence, current.submission_id, current.session, current.session_key,
 				        current.kind, current.payload, current.status, current.accepted_at,
-				        current.attempt_id, current.started_at, current.completed_at, current.error
+				        current.attempt_id, current.input_applied_at, current.recovery_requested_at,
+				        current.started_at, current.completed_at, current.error
 				 FROM flue_agent_submissions AS current
 				 WHERE current.kind = 'dispatch' AND current.status = 'queued'
 				   AND NOT EXISTS (
@@ -263,7 +267,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			this.sql
 				.exec(
 					`SELECT sequence, submission_id, session, session_key, kind, payload, status,
-					        accepted_at, attempt_id, started_at, completed_at, error
+					        accepted_at, attempt_id, input_applied_at, recovery_requested_at, started_at, completed_at, error
 					 FROM flue_agent_submissions
 					 WHERE kind = 'dispatch' AND status = 'running'
 					 ORDER BY sequence ASC`,
@@ -309,24 +313,50 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			: null;
 	}
 
-	recoverDispatchAttempt(
+	markDispatchInputApplied(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null {
+		this.sql.exec(
+			`UPDATE flue_agent_submissions
+			 SET input_applied_at = COALESCE(input_applied_at, ?)
+			 WHERE submission_id = ? AND kind = 'dispatch' AND status = 'running' AND attempt_id = ?`,
+			Date.now(),
+			submissionId,
+			attemptId,
+		);
+		const submission = this.getDispatch(submissionId);
+		return submission?.status === 'running' && submission.attemptId === attemptId
+			? submission
+			: null;
+	}
+
+	requestDispatchRecovery(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null {
+		this.sql.exec(
+			`UPDATE flue_agent_submissions
+			 SET recovery_requested_at = COALESCE(recovery_requested_at, ?)
+			 WHERE submission_id = ? AND kind = 'dispatch' AND status = 'running' AND attempt_id = ?`,
+			Date.now(),
+			submissionId,
+			attemptId,
+		);
+		const submission = this.getDispatch(submissionId);
+		return submission?.status === 'running' && submission.attemptId === attemptId
+			? submission
+			: null;
+	}
+
+	requeueDispatchBeforeInputApplied(
 		submissionId: string,
-		expectedAttemptId: string,
-		nextAttemptId: string,
+		attemptId: string,
 	): SqlAgentDispatchSubmission | null {
 		this.sql.exec(
 			`UPDATE flue_agent_submissions
-			 SET attempt_id = ?, started_at = ?
-			 WHERE submission_id = ? AND kind = 'dispatch' AND status = 'running' AND attempt_id = ?`,
-			nextAttemptId,
-			Date.now(),
+			 SET status = 'queued', attempt_id = NULL, recovery_requested_at = NULL, started_at = NULL
+			 WHERE submission_id = ? AND kind = 'dispatch' AND status = 'running'
+			   AND attempt_id = ? AND input_applied_at IS NULL`,
 			submissionId,
-			expectedAttemptId,
+			attemptId,
 		);
 		const submission = this.getDispatch(submissionId);
-		return submission?.status === 'running' && submission.attemptId === nextAttemptId
-			? submission
-			: null;
+		return submission?.status === 'queued' ? submission : null;
 	}
 
 	completeDispatch(submissionId: string, attemptId: string): void {
@@ -396,7 +426,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 		return this.sql
 			.exec(
 				`SELECT sequence, submission_id, session, session_key, kind, payload, status,
-				        accepted_at, attempt_id, started_at, completed_at, error
+				        accepted_at, attempt_id, input_applied_at, recovery_requested_at, started_at, completed_at, error
 				 FROM flue_agent_submissions
 				 WHERE submission_id = ? AND kind = 'dispatch'
 				 LIMIT 1`,
@@ -420,7 +450,18 @@ function parseDispatchSubmission(row: SqlRow): SqlAgentDispatchSubmission {
 			row.status !== 'error') ||
 		typeof row.accepted_at !== 'number' ||
 		(row.attempt_id !== null && row.attempt_id !== undefined && typeof row.attempt_id !== 'string') ||
+		(row.input_applied_at !== null &&
+			row.input_applied_at !== undefined &&
+			typeof row.input_applied_at !== 'number') ||
+		(row.recovery_requested_at !== null &&
+			row.recovery_requested_at !== undefined &&
+			typeof row.recovery_requested_at !== 'number') ||
 		(row.started_at !== null && row.started_at !== undefined && typeof row.started_at !== 'number') ||
+		(row.status === 'queued' &&
+			(row.attempt_id !== null ||
+				row.input_applied_at !== null ||
+				row.recovery_requested_at !== null ||
+				row.started_at !== null)) ||
 		(row.status === 'running' &&
 			(typeof row.attempt_id !== 'string' || typeof row.started_at !== 'number'))
 	) {
@@ -452,6 +493,10 @@ function parseDispatchSubmission(row: SqlRow): SqlAgentDispatchSubmission {
 		status: row.status,
 		acceptedAt: row.accepted_at,
 		...(typeof row.attempt_id === 'string' ? { attemptId: row.attempt_id } : {}),
+		...(typeof row.input_applied_at === 'number' ? { inputAppliedAt: row.input_applied_at } : {}),
+		...(typeof row.recovery_requested_at === 'number'
+			? { recoveryRequestedAt: row.recovery_requested_at }
+			: {}),
 		...(typeof row.started_at === 'number' ? { startedAt: row.started_at } : {}),
 		...(typeof row.completed_at === 'number' ? { completedAt: row.completed_at } : {}),
 		...(typeof row.error === 'string' ? { error: row.error } : {}),
@@ -481,15 +526,25 @@ function ensureSubmissionTable(sql: SqlStorage): void {
 		 accepted_at INTEGER NOT NULL,
 		 attempt_id TEXT,
 		 input_applied_at INTEGER,
+		 recovery_requested_at INTEGER,
 		 started_at INTEGER,
 		 completed_at INTEGER,
 		 error TEXT
 		)`,
 	);
+	ensureSubmissionColumn(sql, 'input_applied_at', 'INTEGER');
+	ensureSubmissionColumn(sql, 'recovery_requested_at', 'INTEGER');
 	sql.exec(
 		'CREATE INDEX IF NOT EXISTS flue_agent_submissions_status_sequence_idx ON flue_agent_submissions (status, sequence ASC)',
 	);
 	sql.exec(
 		'CREATE INDEX IF NOT EXISTS flue_agent_submissions_session_status_sequence_idx ON flue_agent_submissions (session_key, status, sequence ASC)',
 	);
+}
+
+function ensureSubmissionColumn(sql: SqlStorage, name: string, type: string): void {
+	const rows = sql.exec(`SELECT name FROM pragma_table_info('flue_agent_submissions')`).toArray();
+	if (!rows.some((row) => row.name === name)) {
+		sql.exec(`ALTER TABLE flue_agent_submissions ADD COLUMN ${name} ${type}`);
+	}
 }

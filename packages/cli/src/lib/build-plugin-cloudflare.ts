@@ -224,6 +224,7 @@ import {
   validateAgentDispatchAdmission,
   assertCurrentDispatchInput,
   createDispatchAgentHandler,
+  createDispatchInputInspectionHandler,
   reserveDispatchAgentSession,
   failRecoveredRun,
   configureFlueRuntime,
@@ -363,6 +364,7 @@ const FLUE_AGENT_EXECUTION_STORE = Symbol('flueAgentExecutionStore');
 const FLUE_AGENT_SUBMISSION_WAKE_CALLBACK = '__flueWakeAgentSubmissions';
 const FLUE_AGENT_SUBMISSION_RETRY_CALLBACK = '__flueRetryAgentSubmissions';
 const FLUE_AGENT_SUBMISSION_RETRY_SECONDS = 30;
+const FLUE_AGENT_SUBMISSION_ATTEMPT_STALE_MS = 15 * 60 * 1000;
 const INTERNAL_DISPATCH_PATH = '/__flue/internal/dispatch';
 const dispatchQueue = {
   async enqueue(input) {
@@ -495,9 +497,8 @@ async function handleFlueDispatchAttemptRecovered(ctx, doInstance) {
   const attemptId = ctx.snapshot?.attemptId;
   if (typeof submissionId !== 'string' || typeof attemptId !== 'string') return;
   const submissions = getAgentExecutionStore(doInstance).submissions;
-  const submission = submissions.getDispatch(submissionId);
-  if (submission?.status !== 'running' || submission.attemptId !== attemptId) return;
-  submissions.recoverDispatchAttempt(submissionId, attemptId, crypto.randomUUID());
+  const submission = submissions.requestDispatchRecovery(submissionId, attemptId);
+  if (!submission) return;
   await armFlueAgentSubmissionAdmissionWakes(doInstance);
 }
 
@@ -593,9 +594,10 @@ async function reconcileFlueAgentSubmissions(doInstance, agentName, options = {}
     const directMarkers = listActiveDirectAgentSessionMarkers(doInstance);
     if (attemptMarkers.blockAll || directMarkers.blockAll) return true;
     for (const submission of submissions.listRunningDispatches()) {
-      if (attemptMarkers.keys.has(dispatchAttemptMarkerKey(submission))) continue;
+      if (activeFlueAgentDispatchAttempts.has(dispatchAttemptLocalKey(doInstance, submission))) continue;
+      if (attemptMarkers.keys.has(dispatchAttemptMarkerKey(submission)) && submission.recoveryRequestedAt === undefined) continue;
       if (directMarkers.sessions.has(submission.session) || legacySessions.has(submission.session)) continue;
-      startSqlAgentDispatchAttempt(submission, doInstance, agentName);
+      await reconcileInterruptedSqlAgentDispatch(submission, doInstance, agentName);
     }
     for (const submission of submissions.listRunnableDispatches()) {
       if (directMarkers.sessions.has(submission.session) || legacySessions.has(submission.session)) continue;
@@ -609,9 +611,42 @@ async function reconcileFlueAgentSubmissions(doInstance, agentName, options = {}
   return submissions.hasUnsettledDispatches();
 }
 
+async function reconcileInterruptedSqlAgentDispatch(submission, doInstance, agentName) {
+  const { attemptId, input } = submission;
+  if (!attemptId) return;
+  const submissions = getAgentExecutionStore(doInstance).submissions;
+  if (submission.inputAppliedAt === undefined) {
+    const agent = createdAgents[agentName];
+    if (!agent) throw new Error('[flue] Dispatch target unavailable during durable reconciliation.');
+    const request = new Request('https://flue.invalid' + INTERNAL_DISPATCH_PATH, { method: 'POST' });
+    const ctx = createAgentContextForRequest(doInstance.name, input, doInstance, request, undefined, input.dispatchId);
+    const state = await runWithInstanceContext(doInstance, agentRuntimeIdentity(agentName), () =>
+      createDispatchInputInspectionHandler(agent, input)(ctx),
+    );
+    if (state === 'absent') {
+      submissions.requeueDispatchBeforeInputApplied(input.dispatchId, attemptId);
+      return;
+    }
+    submissions.failDispatch(input.dispatchId, attemptId, new Error('[flue] Dispatch attempt was interrupted after canonical input persistence but before the input-application marker was recorded. Provider replay was not attempted.'));
+    return;
+  }
+  const agent = createdAgents[agentName];
+  if (!agent) throw new Error('[flue] Dispatch target unavailable during durable reconciliation.');
+  const request = new Request('https://flue.invalid' + INTERNAL_DISPATCH_PATH, { method: 'POST' });
+  const ctx = createAgentContextForRequest(doInstance.name, input, doInstance, request, undefined, input.dispatchId);
+  const state = await runWithInstanceContext(doInstance, agentRuntimeIdentity(agentName), () =>
+    createDispatchInputInspectionHandler(agent, input)(ctx),
+  );
+  if (state === 'completed') {
+    submissions.completeDispatch(input.dispatchId, attemptId);
+    return;
+  }
+  submissions.failDispatch(input.dispatchId, attemptId, new Error('[flue] Dispatch attempt was interrupted after input application without a completed canonical response. Provider replay was not attempted.'));
+}
+
 function startSqlAgentDispatchAttempt(submission, doInstance, agentName) {
   if (submission.status !== 'running' || !submission.attemptId) return;
-  const attemptKey = doInstance.ctx.id.toString() + ':' + submission.attemptId;
+  const attemptKey = dispatchAttemptLocalKey(doInstance, submission);
   if (activeFlueAgentDispatchAttempts.has(attemptKey)) return;
   activeFlueAgentDispatchAttempts.add(attemptKey);
   assertAgentsDurabilityApi(doInstance, 'runFiber');
@@ -625,6 +660,10 @@ function startSqlAgentDispatchAttempt(submission, doInstance, agentName) {
   });
 }
 
+function dispatchAttemptLocalKey(doInstance, submission) {
+  return doInstance.ctx.id.toString() + ':' + submission.attemptId;
+}
+
 function dispatchAttemptMarkerKey(submission) {
   return submission.submissionId + ':' + submission.attemptId;
 }
@@ -633,9 +672,14 @@ function listActiveSqlAgentDispatchAttemptMarkers(doInstance) {
   const keys = new Set();
   let blockAll = false;
   const rows = doInstance.ctx.storage.sql.exec(
-    "SELECT snapshot FROM cf_agents_runs WHERE name = 'flue:dispatch-attempt'",
+    "SELECT snapshot, created_at FROM cf_agents_runs WHERE name = 'flue:dispatch-attempt'",
   ).toArray();
   for (const row of rows) {
+    if (typeof row.created_at !== 'number') {
+      blockAll = true;
+      continue;
+    }
+    if (Date.now() - row.created_at > FLUE_AGENT_SUBMISSION_ATTEMPT_STALE_MS) continue;
     let snapshot;
     try {
       snapshot = typeof row.snapshot === 'string' ? JSON.parse(row.snapshot) : null;
@@ -729,7 +773,15 @@ async function processSqlAgentDispatch(submission, doInstance, agentName) {
     releaseSessionLock = await reserveDispatchAgentSession(target, input);
     const request = new Request('https://flue.invalid' + INTERNAL_DISPATCH_PATH, { method: 'POST' });
     const ctx = createAgentContextForRequest(doInstance.name, input, doInstance, request, undefined, input.dispatchId);
-    await runWithInstanceContext(doInstance, agentRuntimeIdentity(agentName), () => createDispatchAgentHandler(agent, input)(ctx));
+    await runWithInstanceContext(doInstance, agentRuntimeIdentity(agentName), () =>
+      createDispatchAgentHandler(agent, input, {
+        onInputApplied: () => {
+          if (!submissions.markDispatchInputApplied(input.dispatchId, attemptId)) {
+            throw new Error('[flue] Dispatch attempt lost ownership before input application.');
+          }
+        },
+      })(ctx),
+    );
     submissions.completeDispatch(input.dispatchId, attemptId);
   } catch (error) {
     submissions.failDispatch(input.dispatchId, attemptId, error);

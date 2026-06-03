@@ -1,7 +1,6 @@
 /** Shared per-agent HTTP dispatcher for the Node and Cloudflare targets. */
 
 import type { FlueContextInternal } from '../client.ts';
-import { isTaskSessionName } from '../session-identity.ts';
 import {
 	InvalidRequestError,
 	parseJsonBody,
@@ -10,6 +9,7 @@ import {
 	toHttpResponse,
 	toPublicError,
 } from '../errors.ts';
+import { isTaskSessionName } from '../session-identity.ts';
 import type {
 	AttachedAgentEvent,
 	AttachedAgentEventCallback,
@@ -22,7 +22,9 @@ import type {
 import {
 	assertCurrentDispatchInput,
 	type DispatchInput,
+	type DispatchInputInspection,
 	type DispatchProcessor,
+	type ProcessDispatchInputOptions,
 } from './dispatch-queue.ts';
 import { streamActiveRunEvents } from './handle-run-routes.ts';
 import { generateWorkflowRunId } from './ids.ts';
@@ -40,7 +42,8 @@ interface DirectRequestSession {
 }
 
 interface DispatchSession {
-	processDispatchInput(input: DispatchInput): PromiseLike<unknown>;
+	inspectDispatchInput?(input: DispatchInput): DispatchInputInspection;
+	processDispatchInput(input: DispatchInput, options?: ProcessDispatchInputOptions): PromiseLike<unknown>;
 }
 
 export interface AgentSessionTarget {
@@ -101,8 +104,16 @@ export async function validateAgentDispatchAdmission(
 export function createDispatchAgentHandler(
 	agent: CreatedAgentHandler,
 	input: DispatchInput,
+	options?: ProcessDispatchInputOptions,
 ): AgentHandler {
-	return (ctx) => processAgentDispatch(ctx, agent, input);
+	return (ctx) => processAgentDispatch(ctx, agent, input, options);
+}
+
+export function createDispatchInputInspectionHandler(
+	agent: CreatedAgentHandler,
+	input: DispatchInput,
+): AgentHandler {
+	return (ctx) => inspectAgentDispatchInput(ctx, agent, input);
 }
 
 export async function reserveDispatchAgentSession(
@@ -116,13 +127,35 @@ async function processAgentDispatch(
 	ctx: FlueContextInternal,
 	agent: CreatedAgentHandler,
 	input: DispatchInput,
+	options?: ProcessDispatchInputOptions,
 ): Promise<unknown> {
+	const session = await openAgentDispatchSession(ctx, agent, input);
+	return session.processDispatchInput(input, options);
+}
+
+async function inspectAgentDispatchInput(
+	ctx: FlueContextInternal,
+	agent: CreatedAgentHandler,
+	input: DispatchInput,
+): Promise<DispatchInputInspection> {
+	const session = await openAgentDispatchSession(ctx, agent, input);
+	if (!session.inspectDispatchInput) {
+		throw new Error('[flue] Internal session does not support dispatch input inspection.');
+	}
+	return session.inspectDispatchInput(input);
+}
+
+async function openAgentDispatchSession(
+	ctx: FlueContextInternal,
+	agent: CreatedAgentHandler,
+	input: DispatchInput,
+): Promise<DispatchSession> {
 	const harness = await ctx.initializeCreatedAgent(agent, undefined);
 	const session = await harness.session(input.session);
 	if (!isDispatchSession(session)) {
 		throw new Error('[flue] Internal session does not support dispatch input processing.');
 	}
-	return session.processDispatchInput(input);
+	return session;
 }
 
 function isDispatchInput(value: unknown): value is DispatchInput {

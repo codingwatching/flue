@@ -49,7 +49,11 @@ import {
 	type ResultToolBundle,
 	ResultUnavailableError,
 } from './result.ts';
-import type { DispatchInput } from './runtime/dispatch-queue.ts';
+import type {
+	DispatchInput,
+	DispatchInputInspection,
+	ProcessDispatchInputOptions,
+} from './runtime/dispatch-queue.ts';
 import { generateOperationId, generateTurnId } from './runtime/ids.ts';
 import { getProviderConfiguration, getRegisteredApiKey } from './runtime/providers.ts';
 import { createFlueFs } from './sandbox.ts';
@@ -548,6 +552,10 @@ function isRetryableModelError(message: AssistantMessage): boolean {
 	);
 }
 
+function isCompletedAssistantResponse(message: AssistantMessage): boolean {
+	return message.stopReason === 'stop' || message.stopReason === 'length';
+}
+
 function modelRetryDelayMs(attempt: number): number {
 	const baseDelay = TRANSIENT_MODEL_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
 	return Math.round(baseDelay * (0.75 + Math.random() * 0.25));
@@ -879,9 +887,27 @@ export class Session implements FlueSession {
 		);
 	}
 
-	processDispatchInput(input: DispatchInput): CallHandle<PromptResponse> {
+	inspectDispatchInput(input: DispatchInput): DispatchInputInspection {
+		const inputEntry = this.history.findDispatchInput(input.dispatchId);
+		if (!inputEntry) return 'absent';
+		const following = this.history.getActivePathSince(inputEntry.id);
+		if (following.some((entry) => entry.type === 'message' && entry.message.role === 'user')) {
+			return 'advanced';
+		}
+		const assistant = following.findLast(
+			(entry): entry is MessageEntry => entry.type === 'message' && entry.message.role === 'assistant',
+		)?.message as AssistantMessage | undefined;
+		return assistant && isCompletedAssistantResponse(assistant) ? 'completed' : 'applied';
+	}
+
+	processDispatchInput(
+		input: DispatchInput,
+		options?: ProcessDispatchInputOptions,
+	): CallHandle<PromptResponse> {
 		return createCallHandle(undefined, (signal) =>
-			this.runOperation('prompt', signal, () => this.runPersistedDispatchInput(input, signal)),
+			this.runOperation('prompt', signal, () =>
+				this.runPersistedDispatchInput(input, signal, options),
+			),
 		);
 	}
 
@@ -2009,6 +2035,7 @@ export class Session implements FlueSession {
 	private async runPersistedDispatchInput(
 		input: DispatchInput,
 		signal: AbortSignal,
+		options?: ProcessDispatchInputOptions,
 	): Promise<PromptResponse> {
 		return this.runPersistedContextInput({
 			findInput: () => this.history.findDispatchInput(input.dispatchId),
@@ -2023,6 +2050,7 @@ export class Session implements FlueSession {
 			callSite: 'this dispatched input',
 			persistenceError: '[flue] Failed to persist dispatched input.',
 			recoveryError: '[flue] Cannot recover dispatched input after the session has advanced.',
+			onInputApplied: options?.onInputApplied,
 			signal,
 		});
 	}
@@ -2035,6 +2063,7 @@ export class Session implements FlueSession {
 		callSite: string;
 		persistenceError: string;
 		recoveryError: string;
+		onInputApplied?: () => Promise<void> | void;
 		signal: AbortSignal;
 	}): Promise<PromptResponse> {
 		return this.withCallOverrides(
@@ -2053,6 +2082,7 @@ export class Session implements FlueSession {
 					inputEntry = options.findInput();
 				}
 				if (!inputEntry) throw new Error(options.persistenceError);
+				await options.onInputApplied?.();
 				const following = this.history.getActivePathSince(inputEntry.id);
 				if (following.some((entry) => entry.type === 'message' && entry.message.role === 'user')) {
 					throw new Error(options.recoveryError);

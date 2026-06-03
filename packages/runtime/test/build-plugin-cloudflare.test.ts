@@ -76,6 +76,15 @@ describe('CloudflarePlugin', () => {
 		expect(entry).toContain("await armFlueAgentSubmissionAdmissionWakes(doInstance);\n    let submission;");
 		expect(entry).toContain('submission = getAgentExecutionStore(doInstance).submissions.admitDispatch(input);');
 		expect(entry).toContain('for (const submission of submissions.listRunningDispatches()) {');
+		expect(entry).toContain('if (activeFlueAgentDispatchAttempts.has(dispatchAttemptLocalKey(doInstance, submission))) continue;');
+		expect(entry).toContain('if (attemptMarkers.keys.has(dispatchAttemptMarkerKey(submission)) && submission.recoveryRequestedAt === undefined) continue;');
+		expect(entry).toContain('await reconcileInterruptedSqlAgentDispatch(submission, doInstance, agentName);');
+		expect(entry).toContain('const submission = submissions.requestDispatchRecovery(submissionId, attemptId);');
+		expect(entry).toContain("SELECT snapshot, created_at FROM cf_agents_runs WHERE name = 'flue:dispatch-attempt'");
+		expect(entry).toContain('if (Date.now() - row.created_at > FLUE_AGENT_SUBMISSION_ATTEMPT_STALE_MS) continue;');
+		expect(entry).toContain('submissions.requeueDispatchBeforeInputApplied(input.dispatchId, attemptId);');
+		expect(entry).toContain('createDispatchInputInspectionHandler(agent, input)(ctx)');
+		expect(entry).toContain('if (!submissions.markDispatchInputApplied(input.dispatchId, attemptId)) {');
 		expect(entry).toContain('const claimed = submissions.claimDispatch(submission.submissionId, crypto.randomUUID());');
 		expect(entry).toContain("void doInstance.runFiber('flue:dispatch-attempt', async (fiberCtx) => {");
 		expect(entry).toContain("fiberCtx.stash({ submissionId: submission.submissionId, attemptId: submission.attemptId });");

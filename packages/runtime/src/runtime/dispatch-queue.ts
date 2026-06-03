@@ -17,6 +17,12 @@ export function assertCurrentDispatchInput(value: unknown): asserts value is Dis
 	}
 }
 
+export type DispatchInputInspection = 'absent' | 'applied' | 'completed' | 'advanced';
+
+export interface ProcessDispatchInputOptions {
+	onInputApplied?: () => Promise<void> | void;
+}
+
 export interface DispatchProcessor {
 	process(input: DispatchInput): Promise<void> | void;
 }
