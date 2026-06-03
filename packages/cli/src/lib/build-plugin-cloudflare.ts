@@ -51,6 +51,12 @@ export class CloudflarePlugin implements BuildPlugin {
 					index,
 				) => `const agentExtension${index} = resolveCloudflareAgentExtension(agentModules[${JSON.stringify(agent.name)}], ${JSON.stringify(agent.name)});
 const ${agentClassName(agent.name)} = class ${agentClassName(agent.name)} extends agentExtension${index}.base(Agent) {
+  constructor(ctx, env) {
+    const executionStore = createSqlAgentExecutionStore(ctx.storage, ${JSON.stringify(agentClassName(agent.name))});
+    super(ctx, env);
+    this[FLUE_AGENT_EXECUTION_STORE] = executionStore;
+  }
+
   async onRequest(request) {
     return dispatchAgent(request, this, ${JSON.stringify(agent.name)}, directHandlers[${JSON.stringify(agent.name)}]);
   }
@@ -187,6 +193,8 @@ import {
   InMemorySessionStore,
   InMemoryRunStore,
   createDurableRunStore,
+  createSqlAgentExecutionStore,
+  createSqlSessionStore,
   createRunSubscriberRegistry,
   bashFactoryToSessionEnv,
   resolveModel,
@@ -329,9 +337,9 @@ function resolveSandbox(sandbox) {
   return null;
 }
 
-// Fallback in-memory store (used if no DO storage is available).
-const memoryStore = new InMemorySessionStore();
+const memoryWorkflowSessionStore = new InMemorySessionStore();
 const memoryRunStore = new InMemoryRunStore();
+const FLUE_AGENT_EXECUTION_STORE = Symbol('flueAgentExecutionStore');
 const INTERNAL_DISPATCH_PATH = '/__flue/internal/dispatch';
 const dispatchQueue = {
   async enqueue(input) {
@@ -351,37 +359,13 @@ const dispatchQueue = {
 // Module-scoped per-isolate registry; run ids isolate buckets across DOs.
 const runSubscribers = createRunSubscriberRegistry();
 
-// Create a DO-backed session store from the Durable Object's SQL storage.
-function createDOStore(sql) {
-  // Ensure the table exists
-  sql.exec(
-    'CREATE TABLE IF NOT EXISTS flue_sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL)'
-  );
-  return {
-    async save(id, data) {
-      const json = JSON.stringify(data);
-      sql.exec(
-        'INSERT OR REPLACE INTO flue_sessions (id, data, updated_at) VALUES (?, ?, ?)',
-        id, json, Date.now()
-      );
-    },
-    async load(id) {
-      const rows = sql.exec('SELECT data FROM flue_sessions WHERE id = ?', id).toArray();
-      if (rows.length === 0) return null;
-      return JSON.parse(rows[0].data);
-    },
-    async delete(id) {
-      sql.exec('DELETE FROM flue_sessions WHERE id = ?', id);
-    },
-  };
+function getAgentExecutionStore(doInstance) {
+  const store = doInstance[FLUE_AGENT_EXECUTION_STORE];
+  if (!store) throw new Error('[flue] Generated Cloudflare agent execution store was not initialized.');
+  return store;
 }
 
-function createContextForRequest(id, runId, payload, doInstance, req, initialEventIndex, dispatchId) {
-  // Use DO SQLite storage by default, fall back to in-memory
-  const defaultStore = doInstance?.ctx?.storage?.sql
-    ? createDOStore(doInstance.ctx.storage.sql)
-    : memoryStore;
-
+function createContextForRequest(id, runId, payload, doInstance, req, defaultStore, initialEventIndex, dispatchId) {
   return createFlueContext({
     id,
     runId,
@@ -397,6 +381,25 @@ function createContextForRequest(id, runId, payload, doInstance, req, initialEve
     defaultStore,
     resolveSandbox,
   });
+}
+
+function createAgentContextForRequest(id, payload, doInstance, req, initialEventIndex, dispatchId) {
+  return createContextForRequest(
+    id,
+    undefined,
+    payload,
+    doInstance,
+    req,
+    getAgentExecutionStore(doInstance).sessions,
+    initialEventIndex,
+    dispatchId,
+  );
+}
+
+function createWorkflowContextForRequest(id, runId, payload, doInstance, req, initialEventIndex, dispatchId) {
+  const sql = doInstance?.ctx?.storage?.sql;
+  const defaultStore = sql ? createSqlSessionStore(sql) : memoryWorkflowSessionStore;
+  return createContextForRequest(id, runId, payload, doInstance, req, defaultStore, initialEventIndex, dispatchId);
 }
 
 function createRunStoreForRequest(doInstance) {
@@ -469,7 +472,7 @@ async function handleFlueDirectRecovered(ctx, doInstance, agentName) {
     assertAgentsDurabilityApi(doInstance, 'runFiber');
     await doInstance.runFiber('flue:direct', async (fiberCtx) => {
       fiberCtx.stash({ payload });
-      const directCtx = createContextForRequest(doInstance.name, undefined, payload, doInstance, request);
+      const directCtx = createAgentContextForRequest(doInstance.name, payload, doInstance, request);
       return runWithInstanceContext(doInstance, identity, () => handler(directCtx));
     });
     console.info('[flue:direct-recovery]', { agentName, instanceId: doInstance.name, operation: 'retry', outcome: 'restart_completed' });
@@ -491,7 +494,7 @@ async function handleFlueWorkflowFiberRecovered(ctx, doInstance, workflowName) {
     runStore,
     runSubscribers,
     runRegistry: createRunRegistryForRequest(doInstance.env),
-    createContext: (id_, recoveredRunId, payload, req, initialEventIndex) => createContextForRequest(id_, recoveredRunId, payload, doInstance, req, initialEventIndex),
+    createContext: (id_, recoveredRunId, payload, req, initialEventIndex) => createWorkflowContextForRequest(id_, recoveredRunId, payload, doInstance, req, initialEventIndex),
   });
 }
 
@@ -524,7 +527,7 @@ async function processManagedAgentDispatch(input, doInstance, agentName, fiberId
   const releaseSessionLock = await reserveDispatchAgentSession(target, input);
   const request = new Request('https://flue.invalid' + INTERNAL_DISPATCH_PATH, { method: 'POST' });
   try {
-    const ctx = createContextForRequest(doInstance.name, undefined, input, doInstance, request, undefined, input.dispatchId);
+    const ctx = createAgentContextForRequest(doInstance.name, input, doInstance, request, undefined, input.dispatchId);
     await runWithInstanceContext(doInstance, agentRuntimeIdentity(agentName), () => createDispatchAgentHandler(agent, input)(ctx));
   } finally {
     releaseSessionLock?.();
@@ -573,7 +576,7 @@ async function dispatchWorkflow(request, doInstance, workflowName) {
       runStore: createRunStoreForRequest(doInstance),
       runSubscribers,
       runRegistry: createRunRegistryForRequest(doInstance.env),
-      createContext: (id_, runId, payload, req, initialEventIndex, dispatchId) => createContextForRequest(id_, runId, payload, doInstance, req, initialEventIndex, dispatchId),
+      createContext: (id_, runId, payload, req, initialEventIndex, dispatchId) => createWorkflowContextForRequest(id_, runId, payload, doInstance, req, initialEventIndex, dispatchId),
       startWorkflowAdmission: (runId, run) => {
         assertAgentsDurabilityApi(doInstance, 'runFiber');
         return doInstance.runFiber('flue:workflow:' + runId, () => runWithInstanceContext(doInstance, identity, run));
@@ -612,7 +615,7 @@ async function dispatchAgent(request, doInstance, agentName, handler) {
       agentName,
       id,
       handler,
-      createContext: (id_, runId, payload, req, initialEventIndex, dispatchId) => createContextForRequest(id_, runId, payload, doInstance, req, initialEventIndex, dispatchId),
+      createContext: (id_, runId, payload, req, initialEventIndex, dispatchId) => createAgentContextForRequest(id_, payload, doInstance, req, initialEventIndex, dispatchId),
       runHandler: (ctx, h) => {
         assertAgentsDurabilityApi(doInstance, 'runFiber');
         return doInstance.runFiber('flue:direct', (fiberCtx) => {
@@ -673,7 +676,7 @@ async function messageAgentSocket(connection, message, doInstance, agentName) {
     request: socketRequest(connection),
     handler,
     beforePrompt: (session) => assertNoPendingDispatchForDirectSession(doInstance, agentName, session),
-    createContext: (id_, runId, payload, req) => createContextForRequest(id_, runId, payload, doInstance, req),
+    createContext: (id_, runId, payload, req) => createAgentContextForRequest(id_, payload, doInstance, req),
     runHandler: (ctx, h) => {
       assertAgentsDurabilityApi(doInstance, 'runFiber');
       return doInstance.runFiber('flue:direct', (fiberCtx) => {
@@ -696,7 +699,7 @@ async function messageWorkflowSocket(connection, message, doInstance, workflowNa
     runStore: createRunStoreForRequest(doInstance),
     runSubscribers,
     runRegistry: createRunRegistryForRequest(doInstance.env),
-    createContext: (id_, runId, payload, req) => createContextForRequest(id_, runId, payload, doInstance, req),
+    createContext: (id_, runId, payload, req) => createWorkflowContextForRequest(id_, runId, payload, doInstance, req),
     startWorkflowAdmission: (runId, run) => {
       assertAgentsDurabilityApi(doInstance, 'runFiber');
       return doInstance.runFiber('flue:workflow:' + runId, () => runWithInstanceContext(doInstance, identity, run));

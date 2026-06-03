@@ -17,6 +17,35 @@ describe('CloudflarePlugin', () => {
 		expect(entry).toContain('bindingName: "FLUE_DRAFT_WORKFLOW"');
 	});
 
+	it('initializes durable agent execution stores without changing workflow run-store behavior', async () => {
+		const entry = await new CloudflarePlugin().generateEntryPoint(
+			testBuildContext({
+				agents: [{ name: 'assistant', filePath: '/fixture/agents/assistant.ts' }],
+				workflows: [{ name: 'draft', filePath: '/fixture/workflows/draft.ts' }],
+			}),
+		);
+
+		expect(entry).toContain('createSqlAgentExecutionStore');
+		expect(entry).toContain('createSqlSessionStore');
+		expect(entry).toContain(
+			`constructor(ctx, env) {
+    const executionStore = createSqlAgentExecutionStore(ctx.storage, "FlueAssistantAgent");
+    super(ctx, env);
+    this[FLUE_AGENT_EXECUTION_STORE] = executionStore;
+  }`,
+		);
+		expect(entry).not.toContain('const agentExecutionStores = new WeakMap();');
+		expect(entry).toContain('const memoryWorkflowSessionStore = new InMemorySessionStore();');
+		expect(entry).toContain(
+			'const defaultStore = sql ? createSqlSessionStore(sql) : memoryWorkflowSessionStore;',
+		);
+		expect(entry).toContain('createDurableRunStore(doInstance.ctx.storage.sql)');
+		expect(entry).toContain(': memoryRunStore;');
+		expect(entry).not.toContain('function createDOStore(sql)');
+		expect(entry).not.toContain('const memoryStore = new InMemorySessionStore();');
+		expect(entry).not.toContain('CREATE TABLE IF NOT EXISTS flue_sessions');
+	});
+
 	it('uses explicit Flue routing instead of the Agents SDK router', async () => {
 		const entry = await new CloudflarePlugin().generateEntryPoint(
 			testBuildContext({
