@@ -945,20 +945,6 @@ export class Session implements FlueSession {
 		);
 	}
 
-	async recordLegacyDirectSubmissionTerminal(
-		input: DirectSubmissionInput,
-		terminal: AgentSubmissionTerminalInput,
-	): Promise<void> {
-		if (!this.history.findDirectSubmissionInput(input.submissionId)) {
-			this.history.appendMessage(
-				createUserContextMessage(input.payload.message, new Date().toISOString()),
-				'prompt',
-				{ directSubmissionId: input.submissionId },
-			);
-		}
-		await this.recordSubmissionTerminal(terminal);
-	}
-
 	async recordSubmissionTerminal(input: AgentSubmissionTerminalInput): Promise<void> {
 		if (this.history.findSubmissionTerminal(input.submissionId)) return;
 		this.history.appendMessage(

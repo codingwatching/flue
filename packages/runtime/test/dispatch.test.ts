@@ -15,7 +15,6 @@ import {
 	createDispatchAgentHandler,
 	createDispatchInputInspectionHandler,
 	createFlueContext,
-	createLegacyDirectSubmissionTerminalHandler,
 	createSubmissionTerminalHandler,
 	type DirectSubmissionInput,
 	type DispatchInput,
@@ -705,57 +704,6 @@ describe('dispatched session processing', () => {
 				],
 			},
 		});
-	});
-
-	it('persists captured input and one terminal advisory for an interrupted legacy direct prompt', async () => {
-		const provider = createProvider();
-		const store = new InMemorySessionStore();
-		const input: DirectSubmissionInput = {
-			submissionId: 'legacy-direct:fiber-1',
-			agent: 'moderator',
-			id: 'guild:legacy-terminal',
-			session: 'case:legacy-terminal',
-			payload: { message: 'Captured legacy prompt' },
-			acceptedAt: '2026-06-01T00:00:00.000Z',
-		};
-		const agent = createAgent(() => ({
-			model: `${provider.getModel().provider}/${provider.getModel().id}`,
-			persist: store,
-		}));
-		const createContext = () =>
-			createFlueContext({
-				id: input.id,
-				payload: input.payload,
-				env: {},
-				req: new Request('http://flue.local/agents/moderator/guild:legacy-terminal', { method: 'POST' }),
-				agentConfig: testAgentConfig(),
-				createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
-				defaultStore: new InMemorySessionStore(),
-			});
-		const terminal = {
-			submissionId: input.submissionId,
-			kind: 'direct' as const,
-			reason: 'interrupted_after_input_application' as const,
-			message: 'A pre-upgrade direct prompt was interrupted. Provider replay was not attempted.',
-		};
-
-		await createLegacyDirectSubmissionTerminalHandler(agent, input, terminal)(createContext());
-		await createLegacyDirectSubmissionTerminalHandler(agent, input, terminal)(createContext());
-
-		const data = await store.load(`agent-session:${JSON.stringify([input.id, 'default', input.session])}`);
-		expect(data?.entries).toHaveLength(2);
-		expect(data?.entries[0]).toMatchObject({
-			directSubmissionId: input.submissionId,
-			message: { role: 'user', content: [{ type: 'text', text: 'Captured legacy prompt' }] },
-		});
-		expect(data?.entries[1]).toMatchObject({
-			submissionTerminal: {
-				submissionId: input.submissionId,
-				kind: 'direct',
-				reason: 'interrupted_after_input_application',
-			},
-		});
-		expect(provider.state.callCount).toBe(0);
 	});
 
 	it('classifies a completed canonical direct response without model replay', async () => {

@@ -145,33 +145,6 @@ describe('createSqlAgentExecutionStore()', () => {
 		]);
 	});
 
-	it('adds recovery columns when an existing submission table predates the current schema', () => {
-		const { db, sql, transactionSync } = makeFakeSql();
-		db.exec(`CREATE TABLE flue_agent_submissions (
-		 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-		 submission_id TEXT NOT NULL UNIQUE,
-		 session TEXT NOT NULL,
-		 session_key TEXT NOT NULL,
-		 kind TEXT NOT NULL,
-		 payload TEXT NOT NULL,
-		 status TEXT NOT NULL,
-		 accepted_at INTEGER NOT NULL,
-		 attempt_id TEXT,
-		 started_at INTEGER,
-		 completed_at INTEGER,
-		 error TEXT
-		)`);
-
-		createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
-
-		expect(
-			db.prepare("SELECT name FROM pragma_table_info('flue_agent_submissions') ORDER BY cid").all(),
-		).toContainEqual({ name: 'input_applied_at' });
-		expect(
-			db.prepare("SELECT name FROM pragma_table_info('flue_agent_submissions') ORDER BY cid").all(),
-		).toContainEqual({ name: 'recovery_requested_at' });
-	});
-
 	it('admits one queued dispatch row when the same submission is replayed', () => {
 		const { db, sql, transactionSync } = makeFakeSql();
 		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
@@ -289,41 +262,6 @@ describe('createSqlAgentExecutionStore()', () => {
 			status: 'error',
 			error: expect.any(String),
 		});
-	});
-
-	it('adopts legacy dispatches ahead of existing SQL submissions in historical order', () => {
-		const { db, sql, transactionSync } = makeFakeSql();
-		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
-		store.submissions.admitDispatch(dispatchInput({ dispatchId: 'current' }));
-
-		const adopted = store.submissions.adoptLegacyDispatches([
-			dispatchInput({ dispatchId: 'legacy-1' }),
-			dispatchInput({ dispatchId: 'legacy-2' }),
-		]);
-
-		expect(adopted.map((submission) => submission.submissionId)).toEqual(['legacy-1', 'legacy-2']);
-		expect(
-			db.prepare('SELECT submission_id FROM flue_agent_submissions ORDER BY sequence ASC').all(),
-		).toEqual([
-			{ submission_id: 'legacy-1' },
-			{ submission_id: 'legacy-2' },
-			{ submission_id: 'current' },
-		]);
-	});
-
-	it('adopts more than sixteen legacy dispatches without exceeding the Cloudflare SQL binding limit', () => {
-		const { db, sql, transactionSync } = makeFakeSql();
-		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
-		store.submissions.admitDispatch(dispatchInput({ dispatchId: 'current' }));
-		const legacy = Array.from({ length: 17 }, (_, index) =>
-			dispatchInput({ dispatchId: `legacy-${index + 1}` }),
-		);
-
-		store.submissions.adoptLegacyDispatches(legacy);
-
-		expect(
-			db.prepare('SELECT submission_id FROM flue_agent_submissions ORDER BY sequence ASC').all(),
-		).toEqual([...legacy.map((input) => ({ submission_id: input.dispatchId })), { submission_id: 'current' }]);
 	});
 
 	it('records input application and recovery requests only for the owning running attempt', () => {
@@ -447,7 +385,7 @@ describe('createSqlAgentExecutionStore()', () => {
 	});
 
 	it('clears terminal rows when a settled session is deleted', () => {
-		const { sql, transactionSync } = makeFakeSql();
+		const { db, sql, transactionSync } = makeFakeSql();
 		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
 		const sessionKey = 'agent-session:["agent-1","default","default"]';
 		store.submissions.admitDispatch(dispatchInput());
@@ -458,9 +396,13 @@ describe('createSqlAgentExecutionStore()', () => {
 		store.submissions.finishSessionDeletion(sessionKey);
 
 		expect(store.submissions.getSubmission('dispatch-1')).toBeNull();
-		expect(store.submissions.getDispatchReceipt('dispatch-1')).toEqual({
-			submissionId: 'dispatch-1',
-			acceptedAt: Date.parse('2026-06-03T00:00:00.000Z'),
+		expect(
+			db.prepare('SELECT dispatch_id, accepted_at FROM flue_agent_dispatch_receipts WHERE dispatch_id = ?').get(
+				'dispatch-1',
+			),
+		).toEqual({
+			dispatch_id: 'dispatch-1',
+			accepted_at: Date.parse('2026-06-03T00:00:00.000Z'),
 		});
 	});
 
@@ -487,24 +429,6 @@ describe('createSqlAgentExecutionStore()', () => {
 		expect(store.submissions.getSubmission('dispatch-1')).toBeNull();
 	});
 
-	it('expires payload-free dispatch receipts lazily after the replay horizon', () => {
-		const { db, sql, transactionSync } = makeFakeSql();
-		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
-		const sessionKey = 'agent-session:["agent-1","default","default"]';
-		store.submissions.admitDispatch(dispatchInput());
-		store.submissions.claimSubmission('dispatch-1', 'attempt-1');
-		store.submissions.completeSubmission('dispatch-1', 'attempt-1');
-		store.submissions.beginSessionDeletion(sessionKey);
-		store.submissions.finishSessionDeletion(sessionKey);
-		db.prepare('UPDATE flue_agent_dispatch_receipts SET settled_at = 1 WHERE dispatch_id = ?').run(
-			'dispatch-1',
-		);
-
-		store.submissions.cleanupDispatchReceipt('dispatch-1', 2);
-
-		expect(store.submissions.getDispatchReceipt('dispatch-1')).toBeNull();
-	});
-
 	it('sweeps only expired terminal submissions in bounded batches', () => {
 		const { db, sql, transactionSync } = makeFakeSql();
 		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
@@ -520,8 +444,7 @@ describe('createSqlAgentExecutionStore()', () => {
 		expect(store.submissions.cleanupTerminalSubmissions(2, 1)).toBe(1);
 		expect(store.submissions.cleanupTerminalSubmissions(2, 1)).toBe(1);
 		expect(store.submissions.cleanupTerminalSubmissions(2, 1)).toBe(0);
-		expect(store.submissions.getDispatchReceipt('expired-1')).toBeNull();
-		expect(store.submissions.getDispatchReceipt('expired-2')).toBeNull();
+		expect(db.prepare('SELECT dispatch_id FROM flue_agent_dispatch_receipts').all()).toEqual([]);
 		expect(store.submissions.getSubmission('active')).toMatchObject({ status: 'queued' });
 	});
 

@@ -48,17 +48,14 @@ export interface SqlAgentSubmission {
 
 export interface SqlAgentSubmissionStore {
 	getSubmission(submissionId: string): SqlAgentSubmission | null;
-	getDispatchReceipt(submissionId: string): SqlAgentDispatchReceipt | null;
 	admitDispatch(input: DispatchInput): SqlAgentSubmission;
 	admitDirect(input: DirectSubmissionInput): SqlAgentSubmission;
-	adoptLegacyDispatches(inputs: readonly DispatchInput[]): SqlAgentSubmission[];
 	hasUnsettledSubmissions(): boolean;
 	listRunnableSubmissions(): SqlAgentSubmission[];
 	listRunningSubmissions(): SqlAgentSubmission[];
 	beginSessionDeletion(sessionKey: string): void;
 	finishSessionDeletion(sessionKey: string): void;
 	cleanupTerminalSubmissions(completedBefore: number, limit?: number): number;
-	cleanupDispatchReceipt(submissionId: string, settledBefore: number): void;
 	claimSubmission(submissionId: string, attemptId: string): SqlAgentSubmission | null;
 	markSubmissionInputApplied(submissionId: string, attemptId: string): SqlAgentSubmission | null;
 	requestSubmissionRecovery(submissionId: string, attemptId: string): SqlAgentSubmission | null;
@@ -158,7 +155,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 		return row ? parseSubmission(row) : null;
 	}
 
-	getDispatchReceipt(submissionId: string): SqlAgentDispatchReceipt | null {
+	private getDispatchReceipt(submissionId: string): SqlAgentDispatchReceipt | null {
 		const row = this.sql
 			.exec(
 				'SELECT dispatch_id, accepted_at FROM flue_agent_dispatch_receipts WHERE dispatch_id = ? LIMIT 1',
@@ -178,58 +175,6 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 
 	admitDirect(input: DirectSubmissionInput): SqlAgentSubmission {
 		return this.admitSubmission('direct', input.submissionId, input);
-	}
-
-	adoptLegacyDispatches(inputs: readonly DispatchInput[]): SqlAgentSubmission[] {
-		const unique = new Map<string, DispatchInput>();
-		for (const input of inputs) {
-			const payload = JSON.stringify(input);
-			const row = this.readSubmissionRow(input.dispatchId);
-			if (row && (row.kind !== 'dispatch' || row.payload !== payload)) {
-				throw new SqlAgentSubmissionConflictError('[flue] Conflicting legacy dispatch adoption.');
-			}
-			const prior = unique.get(input.dispatchId);
-			if (prior && JSON.stringify(prior) !== payload) {
-				throw new SqlAgentSubmissionConflictError('[flue] Conflicting legacy dispatch adoption.');
-			}
-			if (!prior) unique.set(input.dispatchId, input);
-		}
-		const missing = [...unique.values()].filter((input) => !this.readSubmissionRow(input.dispatchId));
-		const adopt = () => {
-			const first = this.sql
-				.exec('SELECT MIN(sequence) AS sequence FROM flue_agent_submissions')
-				.toArray()[0]?.sequence;
-			let sequence = typeof first === 'number' ? first - missing.length : -missing.length;
-			for (let offset = 0; offset < missing.length; offset += 16) {
-				const batch = missing.slice(offset, offset + 16);
-				const values: unknown[] = [];
-				for (const input of batch) {
-					const acceptedAt = parseAcceptedAt(input.acceptedAt, 'Legacy dispatch adoption');
-					values.push(
-						sequence++,
-						input.dispatchId,
-						input.session,
-						createSessionStorageKey(input.id, 'default', input.session),
-						JSON.stringify(input),
-						acceptedAt,
-					);
-				}
-				this.sql.exec(
-					`INSERT INTO flue_agent_submissions
-					 (sequence, submission_id, session, session_key, kind, payload, status, accepted_at)
-					 VALUES ${batch.map(() => "(?, ?, ?, ?, 'dispatch', ?, 'queued', ?)").join(', ')}`,
-					...values,
-				);
-			}
-		};
-		if (missing.length > 0) this.transactionSync(adopt);
-		return inputs.map((input) => {
-			const submission = this.getSubmission(input.dispatchId);
-			if (!submission || submission.kind !== 'dispatch') {
-				throw new Error('[flue] Legacy dispatch adoption did not create a submission row.');
-			}
-			return submission;
-		});
 	}
 
 	hasUnsettledSubmissions(): boolean {
@@ -348,14 +293,6 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 		}
 		this.sql.exec('DELETE FROM flue_agent_dispatch_receipts WHERE settled_at < ?', completedBefore);
 		return rows.length;
-	}
-
-	cleanupDispatchReceipt(submissionId: string, settledBefore: number): void {
-		this.sql.exec(
-			'DELETE FROM flue_agent_dispatch_receipts WHERE dispatch_id = ? AND settled_at < ?',
-			submissionId,
-			settledBefore,
-		);
 	}
 
 	claimSubmission(submissionId: string, attemptId: string): SqlAgentSubmission | null {
@@ -709,8 +646,6 @@ function ensureSubmissionTable(sql: SqlStorage): void {
 		 error TEXT
 		)`,
 	);
-	ensureSubmissionColumn(sql, 'input_applied_at', 'INTEGER');
-	ensureSubmissionColumn(sql, 'recovery_requested_at', 'INTEGER');
 	sql.exec(
 		`CREATE TABLE IF NOT EXISTS flue_agent_session_deletions (
 		 session_key TEXT PRIMARY KEY,
@@ -730,11 +665,4 @@ function ensureSubmissionTable(sql: SqlStorage): void {
 	sql.exec(
 		'CREATE INDEX IF NOT EXISTS flue_agent_submissions_session_status_sequence_idx ON flue_agent_submissions (session_key, status, sequence ASC)',
 	);
-}
-
-function ensureSubmissionColumn(sql: SqlStorage, name: string, type: string): void {
-	const rows = sql.exec(`SELECT name FROM pragma_table_info('flue_agent_submissions')`).toArray();
-	if (!rows.some((row) => row.name === name)) {
-		sql.exec(`ALTER TABLE flue_agent_submissions ADD COLUMN ${name} ${type}`);
-	}
 }

@@ -27,14 +27,6 @@ export interface AgentSubmissionTerminalInput {
 	message: string;
 }
 
-export function assertCurrentDispatchInput(value: unknown): asserts value is DispatchInput {
-	if (value && typeof value === 'object' && 'targetAgent' in value) {
-		throw new Error(
-			'[flue] Legacy dispatch metadata is unsupported. Clear persisted dispatch state created by an earlier Flue beta.',
-		);
-	}
-}
-
 export type AgentSubmissionInputInspection = 'absent' | 'applied' | 'completed' | 'advanced';
 export type DispatchInputInspection = AgentSubmissionInputInspection;
 

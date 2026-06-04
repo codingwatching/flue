@@ -21,11 +21,6 @@ export { createFlueContext } from './client.ts';
 // (registry client) live in the `@flue/runtime/cloudflare` subpath because
 // they pull in `cloudflare:workers`, a virtual module Node can't resolve.
 // The generated CF entry imports them from there directly.
-export type {
-	SqlAgentExecutionStore,
-	SqlAgentSubmission,
-	SqlAgentSubmissionStore,
-} from './cloudflare/agent-execution-store.ts';
 export {
 	createSqlAgentExecutionStore,
 	createSqlSessionStore,
@@ -41,7 +36,7 @@ export type {
 	DispatchProcessor,
 	DispatchQueue,
 } from './runtime/dispatch-queue.ts';
-export { assertCurrentDispatchInput, createAgentSubmissionObserverRegistry, InMemoryDispatchQueue } from './runtime/dispatch-queue.ts';
+export { createAgentSubmissionObserverRegistry, InMemoryDispatchQueue } from './runtime/dispatch-queue.ts';
 export type { ExposedTransport, FlueRuntime } from './runtime/flue-app.ts';
 export {
 	configureFlueRuntime,
@@ -53,7 +48,6 @@ export {
 } from './runtime/flue-app.ts';
 export type {
 	AgentHandler,
-	AgentSessionTarget,
 	CreateContextFn,
 	CreatedAgentHandler,
 	DirectAttachedOptions,
@@ -91,14 +85,12 @@ export {
 	createDirectSubmissionInputInspectionHandler,
 	createDispatchAgentHandler,
 	createDispatchInputInspectionHandler,
-	createLegacyDirectSubmissionTerminalHandler,
 	createSubmissionTerminalHandler,
 	failRecoveredRun,
 	handleAgentRequest,
 	handleWorkflowRequest,
 	invokeDirectAttached,
 	invokeWorkflowAttached,
-	reserveDispatchAgentSession,
 	validateAgentDispatchAdmission,
 } from './runtime/handle-agent.ts';
 export type { HandleRunRouteOptions } from './runtime/handle-run-routes.ts';

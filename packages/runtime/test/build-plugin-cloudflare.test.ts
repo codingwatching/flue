@@ -71,8 +71,8 @@ describe('CloudflarePlugin', () => {
 		expect(entry).not.toContain('scheduleEvery');
 		expect(entry).toContain("await armFlueAgentSubmissionAdmissionWake(doInstance);\n    let submission;");
 		expect(entry).toContain('cleanupFlueAgentSubmissionTerminalState(doInstance);');
-		expect(entry).toContain('submissions.cleanupDispatchReceipt(input.dispatchId, Date.now() - FLUE_AGENT_SUBMISSION_TERMINAL_RETENTION_MS);');
-		expect(entry).toContain('const priorReceipt = submissions.getDispatchReceipt(input.dispatchId);');
+		expect(entry).not.toContain('cleanupDispatchReceipt');
+		expect(entry).not.toContain('getDispatchReceipt');
 		expect(entry).toContain('submission = submissions.admitDispatch(input);');
 		expect(entry).toContain('if (error instanceof SqlAgentDispatchReceiptRetainedError) return Response.json({ dispatchId: error.receipt.submissionId, acceptedAt: new Date(error.receipt.acceptedAt).toISOString() });');
 		expect(entry).toContain('for (const submission of submissions.listRunningSubmissions()) {');
@@ -80,8 +80,11 @@ describe('CloudflarePlugin', () => {
 		expect(entry).toContain("if (submission.status !== 'terminalizing' && attemptMarkers.keys.has(submissionAttemptMarkerKey(submission)) && submission.recoveryRequestedAt === undefined) continue;");
 		expect(entry).toContain('await reconcileInterruptedSqlAgentSubmission(submission, doInstance, agentName);');
 		expect(entry).toContain('await restoreFlueAgentSubmissionWake(doInstance);\n  const submissions = getAgentExecutionStore(doInstance).submissions;\n  submissions.requestSubmissionRecovery(submissionId, attemptId);');
+		expect(entry).toContain('return handleFlueAgentSubmissionAttemptRecovered(ctx, this);');
 		expect(entry).toContain("SELECT snapshot, created_at FROM cf_agents_runs WHERE name = 'flue:submission-attempt'");
 		expect(entry).toContain('if (Date.now() - row.created_at > FLUE_AGENT_SUBMISSION_ATTEMPT_STALE_MS) continue;');
+		expect(entry).toContain('if (row.snapshot === null) continue;');
+		expect(entry).toContain("if (typeof row.snapshot !== 'string') {");
 		expect(entry).toContain('submissions.requeueSubmissionBeforeInputApplied(submission.submissionId, attemptId);');
 		expect(entry).toContain('createDispatchInputInspectionHandler(agent, input)(ctx)');
 		expect(entry).toContain('createDirectSubmissionInputInspectionHandler(agent, input)(ctx)');
@@ -95,7 +98,8 @@ describe('CloudflarePlugin', () => {
 		expect(entry).toContain("if (submission.kind === 'direct') ctx?.setEventCallback(undefined);");
 		expect(entry).toContain('getAgentExecutionStore(doInstance).submissions.admitDirect(input);');
 		expect(entry).toContain('admitAttachedSubmission: (payload, req, onEvent) => admitAttachedAgentSubmission(doInstance, agentName, payload, req, onEvent)');
-		expect(entry).toContain('getAgentExecutionStore(doInstance).submissions.adoptLegacyDispatches(dispatches.map((dispatch) => dispatch.input));');
+		expect(entry).not.toContain('adoptLegacyDispatches');
+		expect(entry).not.toContain('cf_agents_fibers');
 		expect(entry).toContain("idempotent: options.idempotent ?? true");
 		expect(entry).toContain("idempotent: false");
 		expect(entry).not.toContain('generation:');
@@ -112,9 +116,10 @@ describe('CloudflarePlugin', () => {
 		expect(entry).not.toContain("runFiber('flue:direct'");
 		expect(entry).not.toContain('listActiveDirectAgentSessionMarkers');
 		expect(entry).not.toContain('agentSubmissionObservers.takeRequest');
-		expect(entry).toContain("return handleFlueDispatchAttemptRecovered(ctx, this);");
-		expect(entry).toContain("submissionId: 'legacy-direct:' + ctx.id");
-		expect(entry).toContain('createLegacyDirectSubmissionTerminalHandler(agent, input, {');
+		expect(entry).not.toContain('handleFlueDispatchAttemptRecovered');
+		expect(entry).not.toContain("ctx.name === 'flue:dispatch'");
+		expect(entry).not.toContain("ctx.name === 'flue:direct'");
+		expect(entry).not.toContain('createLegacyDirectSubmissionTerminalHandler');
 		expect(entry).not.toContain("startFiber('flue:dispatch'");
 		expect(entry).not.toContain('inspectFiberByKey');
 		expect(entry).not.toContain('ctx.storage.setAlarm');

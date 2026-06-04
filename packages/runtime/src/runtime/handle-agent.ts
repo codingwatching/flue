@@ -19,17 +19,16 @@ import type {
 	FlueEvent,
 	FlueEventCallback,
 } from '../types.ts';
-import {
-	type AgentSubmissionInputInspection,
-	type AgentSubmissionTerminalInput,
-	type AttachedAgentSubmissionAdmission,
-	assertCurrentDispatchInput,
-	type DirectSubmissionInput,
-	type DispatchInput,
-	type DispatchInputInspection,
-	type DispatchProcessor,
-	type ProcessAgentSubmissionInputOptions,
-	type ProcessDispatchInputOptions,
+import type {
+	AgentSubmissionInputInspection,
+	AgentSubmissionTerminalInput,
+	AttachedAgentSubmissionAdmission,
+	DirectSubmissionInput,
+	DispatchInput,
+	DispatchInputInspection,
+	DispatchProcessor,
+	ProcessAgentSubmissionInputOptions,
+	ProcessDispatchInputOptions,
 } from './dispatch-queue.ts';
 import { streamActiveRunEvents } from './handle-run-routes.ts';
 import { generateWorkflowRunId } from './ids.ts';
@@ -61,13 +60,9 @@ interface DirectSubmissionSession {
 
 interface SubmissionTerminalSession {
 	recordSubmissionTerminal(input: AgentSubmissionTerminalInput): Promise<void>;
-	recordLegacyDirectSubmissionTerminal(
-		input: DirectSubmissionInput,
-		terminal: AgentSubmissionTerminalInput,
-	): Promise<void>;
 }
 
-export interface AgentSessionTarget {
+interface AgentSessionTarget {
 	agentName: string;
 	instanceId: string;
 }
@@ -78,7 +73,6 @@ export function createAgentDispatchProcessor(options: {
 }): DispatchProcessor {
 	return {
 		async process(input) {
-			assertCurrentDispatchInput(input);
 			const agent = options.agents[input.agent];
 			if (!agent)
 				throw new Error(`[flue] dispatch target agent "${input.agent}" has no created agent.`);
@@ -111,7 +105,6 @@ export async function validateAgentDispatchAdmission(
 	options: ValidateAgentDispatchAdmissionOptions,
 ): Promise<DispatchReceipt> {
 	const { input } = options;
-	assertCurrentDispatchInput(input);
 	if (!isDispatchInput(input))
 		throw new Error('[flue] Internal dispatch admission received an invalid payload.');
 	if (isTaskSessionName(input.session)) {
@@ -167,22 +160,7 @@ export function createSubmissionTerminalHandler(
 	};
 }
 
-export function createLegacyDirectSubmissionTerminalHandler(
-	agent: CreatedAgentHandler,
-	input: DirectSubmissionInput,
-	terminal: AgentSubmissionTerminalInput,
-): AgentHandler {
-	return async (ctx) => {
-		const harness = await ctx.initializeCreatedAgent(agent, undefined);
-		const session = await harness.session(input.session);
-		if (!isSubmissionTerminalSession(session)) {
-			throw new Error('[flue] Internal session does not support submission terminal persistence.');
-		}
-		await session.recordLegacyDirectSubmissionTerminal(input, terminal);
-	};
-}
-
-export async function reserveDispatchAgentSession(
+async function reserveDispatchAgentSession(
 	target: AgentSessionTarget,
 	payload: unknown,
 ): Promise<() => void> {
