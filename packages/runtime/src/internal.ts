@@ -22,8 +22,8 @@ export { createFlueContext } from './client.ts';
 // they pull in `cloudflare:workers`, a virtual module Node can't resolve.
 // The generated CF entry imports them from there directly.
 export type {
-	SqlAgentDispatchSubmission,
 	SqlAgentExecutionStore,
+	SqlAgentSubmission,
 	SqlAgentSubmissionStore,
 } from './cloudflare/agent-execution-store.ts';
 export {
@@ -34,8 +34,13 @@ export {
 export { createDurableRunStore } from './cloudflare/run-store.ts';
 export { InMemoryRunRegistry } from './node/run-registry.ts';
 export { InMemoryRunStore } from './node/run-store.ts';
-export type { DispatchInput, DispatchProcessor, DispatchQueue } from './runtime/dispatch-queue.ts';
-export { assertCurrentDispatchInput, InMemoryDispatchQueue } from './runtime/dispatch-queue.ts';
+export type {
+	DirectSubmissionInput,
+	DispatchInput,
+	DispatchProcessor,
+	DispatchQueue,
+} from './runtime/dispatch-queue.ts';
+export { assertCurrentDispatchInput, createAgentSubmissionObserverRegistry, InMemoryDispatchQueue } from './runtime/dispatch-queue.ts';
 export type { ExposedTransport, FlueRuntime } from './runtime/flue-app.ts';
 export {
 	configureFlueRuntime,
@@ -81,6 +86,8 @@ export type {
 export {
 	createAgentDispatchProcessor,
 	createDirectAgentHandler,
+	createDirectSubmissionAgentHandler,
+	createDirectSubmissionInputInspectionHandler,
 	createDispatchAgentHandler,
 	createDispatchInputInspectionHandler,
 	failRecoveredRun,

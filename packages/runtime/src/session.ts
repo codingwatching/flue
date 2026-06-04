@@ -50,8 +50,11 @@ import {
 	ResultUnavailableError,
 } from './result.ts';
 import type {
+	AgentSubmissionInputInspection,
+	DirectSubmissionInput,
 	DispatchInput,
 	DispatchInputInspection,
+	ProcessAgentSubmissionInputOptions,
 	ProcessDispatchInputOptions,
 } from './runtime/dispatch-queue.ts';
 import { generateOperationId, generateTurnId } from './runtime/ids.ts';
@@ -370,7 +373,7 @@ export class SessionHistory {
 	appendMessage(
 		message: AgentMessage,
 		source?: MessageSource,
-		dispatch?: DispatchMessageMetadata,
+		metadata?: { dispatch?: DispatchMessageMetadata; directSubmissionId?: string },
 	): string {
 		const entry: MessageEntry = {
 			type: 'message',
@@ -380,7 +383,8 @@ export class SessionHistory {
 			message,
 			source,
 		};
-		if (dispatch) entry.dispatch = dispatch;
+		if (metadata?.dispatch) entry.dispatch = metadata.dispatch;
+		if (metadata?.directSubmissionId) entry.directSubmissionId = metadata.directSubmissionId;
 		this.appendEntry(entry);
 		return entry.id;
 	}
@@ -389,6 +393,13 @@ export class SessionHistory {
 		return this.getActivePath().find(
 			(entry): entry is MessageEntry =>
 				entry.type === 'message' && entry.dispatch?.dispatchId === dispatchId,
+		);
+	}
+
+	findDirectSubmissionInput(submissionId: string): MessageEntry | undefined {
+		return this.getActivePath().find(
+			(entry): entry is MessageEntry =>
+				entry.type === 'message' && entry.directSubmissionId === submissionId,
 		);
 	}
 
@@ -888,16 +899,11 @@ export class Session implements FlueSession {
 	}
 
 	inspectDispatchInput(input: DispatchInput): DispatchInputInspection {
-		const inputEntry = this.history.findDispatchInput(input.dispatchId);
-		if (!inputEntry) return 'absent';
-		const following = this.history.getActivePathSince(inputEntry.id);
-		if (following.some((entry) => entry.type === 'message' && entry.message.role === 'user')) {
-			return 'advanced';
-		}
-		const assistant = following.findLast(
-			(entry): entry is MessageEntry => entry.type === 'message' && entry.message.role === 'assistant',
-		)?.message as AssistantMessage | undefined;
-		return assistant && isCompletedAssistantResponse(assistant) ? 'completed' : 'applied';
+		return this.inspectPersistedInput(this.history.findDispatchInput(input.dispatchId));
+	}
+
+	inspectDirectSubmissionInput(input: DirectSubmissionInput): AgentSubmissionInputInspection {
+		return this.inspectPersistedInput(this.history.findDirectSubmissionInput(input.submissionId));
 	}
 
 	processDispatchInput(
@@ -907,6 +913,17 @@ export class Session implements FlueSession {
 		return createCallHandle(undefined, (signal) =>
 			this.runOperation('prompt', signal, () =>
 				this.runPersistedDispatchInput(input, signal, options),
+			),
+		);
+	}
+
+	processDirectSubmissionInput(
+		input: DirectSubmissionInput,
+		options?: ProcessAgentSubmissionInputOptions,
+	): CallHandle<PromptResponse> {
+		return createCallHandle(undefined, (signal) =>
+			this.runOperation('prompt', signal, () =>
+				this.runPersistedDirectSubmissionInput(input, signal, options),
 			),
 		);
 	}
@@ -2032,6 +2049,18 @@ export class Session implements FlueSession {
 		return undefined;
 	}
 
+	private inspectPersistedInput(inputEntry: MessageEntry | undefined): AgentSubmissionInputInspection {
+		if (!inputEntry) return 'absent';
+		const following = this.history.getActivePathSince(inputEntry.id);
+		if (following.some((entry) => entry.type === 'message' && entry.message.role === 'user')) {
+			return 'advanced';
+		}
+		const assistant = following.findLast(
+			(entry): entry is MessageEntry => entry.type === 'message' && entry.message.role === 'assistant',
+		)?.message as AssistantMessage | undefined;
+		return assistant && isCompletedAssistantResponse(assistant) ? 'completed' : 'applied';
+	}
+
 	private async runPersistedDispatchInput(
 		input: DispatchInput,
 		signal: AbortSignal,
@@ -2043,13 +2072,36 @@ export class Session implements FlueSession {
 				this.history.appendMessage(
 					createUserContextMessage(renderDispatchInput(input), new Date().toISOString()),
 					'dispatch',
-					dispatchMetadata(input),
+					{ dispatch: dispatchMetadata(input) },
 				),
 			errorLabel: `dispatch(${input.dispatchId})`,
 			outputSource: 'dispatch',
 			callSite: 'this dispatched input',
 			persistenceError: '[flue] Failed to persist dispatched input.',
 			recoveryError: '[flue] Cannot recover dispatched input after the session has advanced.',
+			onInputApplied: options?.onInputApplied,
+			signal,
+		});
+	}
+
+	private async runPersistedDirectSubmissionInput(
+		input: DirectSubmissionInput,
+		signal: AbortSignal,
+		options?: ProcessAgentSubmissionInputOptions,
+	): Promise<PromptResponse> {
+		return this.runPersistedContextInput({
+			findInput: () => this.history.findDirectSubmissionInput(input.submissionId),
+			persistInput: () =>
+				this.history.appendMessage(
+					createUserContextMessage(input.payload.message, new Date().toISOString()),
+					'prompt',
+					{ directSubmissionId: input.submissionId },
+				),
+			errorLabel: `direct(${input.submissionId})`,
+			outputSource: 'prompt',
+			callSite: 'this direct input',
+			persistenceError: '[flue] Failed to persist direct input.',
+			recoveryError: '[flue] Cannot recover direct input after the session has advanced.',
 			onInputApplied: options?.onInputApplied,
 			signal,
 		});

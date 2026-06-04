@@ -1,8 +1,8 @@
 import { InvalidRequestError } from '../errors.ts';
+import type { AttachedAgentSubmissionAdmission } from '../runtime/dispatch-queue.ts';
 import type {
 	AgentHandler,
 	CreateContextFn,
-	RunHandlerFn,
 	StartWorkflowAdmissionFn,
 	WorkflowHandler,
 } from '../runtime/handle-agent.ts';
@@ -51,8 +51,7 @@ export interface CloudflareAgentWebSocketOptions extends CloudflareAttachedOptio
 	name: string;
 	id: string;
 	handler: AgentHandler;
-	beforePrompt?: (session: string) => void | Promise<void>;
-	runHandler?: RunHandlerFn;
+	admitAttachedSubmission?: AttachedAgentSubmissionAdmission;
 }
 
 export interface CloudflareWorkflowWebSocketOptions extends CloudflareAttachedOptions {
@@ -186,7 +185,6 @@ async function invokeAgentPrompt(
 ): Promise<void> {
 	let didStart = false;
 	try {
-		await options.beforePrompt?.(message.session ?? 'default');
 		const result = await invokeDirectAttached({
 			agentName: options.name,
 			id: options.id,
@@ -194,7 +192,7 @@ async function invokeAgentPrompt(
 			request: options.request,
 			handler: options.handler,
 			createContext: options.createContext,
-			runHandler: options.runHandler,
+			admitAttachedSubmission: options.admitAttachedSubmission,
 			onEvent: (event) => {
 				if (!didStart) {
 					didStart = true;

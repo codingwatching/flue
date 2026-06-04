@@ -795,6 +795,7 @@ export interface MessageEntry extends SessionEntryBase {
 	message: AgentMessage;
 	source?: 'prompt' | 'skill' | 'shell' | 'task' | 'retry' | 'dispatch';
 	dispatch?: DispatchMessageMetadata;
+	directSubmissionId?: string;
 }
 
 export interface DispatchMessageMetadata {

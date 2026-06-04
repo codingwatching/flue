@@ -9,9 +9,12 @@ import { dispatch, observe } from '../src/index.ts';
 import {
 	configureFlueRuntime,
 	createAgentDispatchProcessor,
+	createDirectSubmissionAgentHandler,
+	createDirectSubmissionInputInspectionHandler,
 	createDispatchAgentHandler,
 	createDispatchInputInspectionHandler,
 	createFlueContext,
+	type DirectSubmissionInput,
 	type DispatchInput,
 	InMemoryDispatchQueue,
 	InMemorySessionStore,
@@ -564,6 +567,125 @@ describe('dispatched session processing', () => {
 
 		expect(order.indexOf('persist-input')).toBeLessThan(order.indexOf('input-applied'));
 		expect(order.indexOf('input-applied')).toBeLessThan(order.indexOf('provider'));
+	});
+
+	it('persists plain direct submission input before marking input application and invoking the provider', async () => {
+		const order: string[] = [];
+		const provider = createProvider();
+		provider.setResponses([
+			() => {
+				order.push('provider');
+				return fauxAssistantMessage('processed direct input');
+			},
+		]);
+		const store = new InMemorySessionStore();
+		const originalSave = store.save.bind(store);
+		store.save = async (id, data) => {
+			if (data.entries.some((entry) => entry.type === 'message' && entry.directSubmissionId === 'direct:input-marker-order')) {
+				order.push('persist-input');
+			}
+			await originalSave(id, data);
+		};
+		const agent = createAgent(() => ({
+			model: `${provider.getModel().provider}/${provider.getModel().id}`,
+			persist: store,
+		}));
+		const input: DirectSubmissionInput = {
+			submissionId: 'direct:input-marker-order',
+			agent: 'moderator',
+			id: 'guild:direct-input-marker-order',
+			session: 'case:direct-input-marker-order',
+			payload: { message: 'Hello directly' },
+			acceptedAt: '2026-06-01T00:00:00.000Z',
+		};
+		const ctx = createFlueContext({
+			id: input.id,
+			payload: input.payload,
+			env: {},
+			req: new Request('http://flue.local/agents/moderator/guild:direct-input-marker-order', { method: 'POST' }),
+			agentConfig: {
+				systemPrompt: '',
+				skills: {},
+				subagents: {},
+				model: undefined,
+				resolveModel: () => provider.getModel(),
+			},
+			createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
+			defaultStore: new InMemorySessionStore(),
+		});
+
+		await createDirectSubmissionAgentHandler(agent, input, {
+			onInputApplied: () => {
+				order.push('input-applied');
+			},
+		})(ctx);
+
+		const data = await store.load(`agent-session:${JSON.stringify([input.id, 'default', input.session])}`);
+		expect(order.indexOf('persist-input')).toBeLessThan(order.indexOf('input-applied'));
+		expect(order.indexOf('input-applied')).toBeLessThan(order.indexOf('provider'));
+		expect(data?.entries[0]).toMatchObject({
+			source: 'prompt',
+			directSubmissionId: input.submissionId,
+			message: { role: 'user', content: [{ type: 'text', text: 'Hello directly' }] },
+		});
+		expect(data?.entries[0]).not.toHaveProperty('dispatch');
+	});
+
+	it('classifies a completed canonical direct response without model replay', async () => {
+		const provider = createProvider();
+		const store = new InMemorySessionStore();
+		const input: DirectSubmissionInput = {
+			submissionId: 'direct:inspect-completed',
+			agent: 'moderator',
+			id: 'guild:direct-inspect-completed',
+			session: 'case:direct-inspect-completed',
+			payload: { message: 'Hello directly' },
+			acceptedAt: '2026-06-01T00:00:00.000Z',
+		};
+		const timestamp = '2026-06-01T00:00:00.000Z';
+		await store.save(`agent-session:${JSON.stringify([input.id, 'default', input.session])}`, {
+			version: 5,
+			affinityKey: 'aff_01KT3P3GZGFBCKHKMQ11A7H2HW',
+			entries: [
+				{
+					type: 'message',
+					id: 'direct-input',
+					parentId: null,
+					timestamp,
+					message: { role: 'user', content: [{ type: 'text', text: input.payload.message }], timestamp: 0 },
+					source: 'prompt',
+					directSubmissionId: input.submissionId,
+				},
+				{
+					type: 'message',
+					id: 'assistant-response',
+					parentId: 'direct-input',
+					timestamp,
+					message: fauxAssistantMessage('persisted response'),
+					source: 'prompt',
+				},
+			],
+			leafId: 'assistant-response',
+			metadata: {},
+			createdAt: timestamp,
+			updatedAt: timestamp,
+		});
+		const agent = createAgent(() => ({
+			model: `${provider.getModel().provider}/${provider.getModel().id}`,
+			persist: store,
+		}));
+		const ctx = createFlueContext({
+			id: input.id,
+			payload: input.payload,
+			env: {},
+			req: new Request('http://flue.local/agents/moderator/guild:direct-inspect-completed', { method: 'POST' }),
+			agentConfig: testAgentConfig(),
+			createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
+			defaultStore: new InMemorySessionStore(),
+		});
+
+		await expect(createDirectSubmissionInputInspectionHandler(agent, input)(ctx)).resolves.toBe('completed');
+		expect(provider.state.callCount).toBe(0);
 	});
 
 	it('classifies a completed canonical dispatch response without model replay', async () => {

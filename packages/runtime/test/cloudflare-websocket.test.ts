@@ -88,9 +88,6 @@ describe('Cloudflare agent WebSockets', () => {
 				name: 'assistant',
 				id: 'agent-instance-1',
 				request: new Request('https://example.com/flue/agents/assistant/agent-instance-1'),
-				beforePrompt: async (session) => {
-					calls.push(`restore:${session}`);
-				},
 				handler: async (ctx) => {
 					calls.push('invoke');
 					return ctx.payload;
@@ -99,7 +96,7 @@ describe('Cloudflare agent WebSockets', () => {
 			},
 		);
 
-		expect(calls).toEqual(['restore:support', 'invoke']);
+		expect(calls).toEqual(['invoke']);
 		expect(connection.messages).toContainEqual({
 			version: 1,
 			type: 'result',
@@ -107,6 +104,43 @@ describe('Cloudflare agent WebSockets', () => {
 			result: { message: 'Hello', session: 'support' },
 		});
 		expect(connection.closed).toBeUndefined();
+	});
+
+	it('uses attached durable submission admission when configured for a Cloudflare agent socket', async () => {
+		const connection = new TestConnection();
+		const calls: string[] = [];
+
+		await messageCloudflareAgentWebSocket(
+			connection,
+			JSON.stringify({ version: 1, type: 'prompt', requestId: 'prompt-1', message: 'Hello' }),
+			{
+				name: 'assistant',
+				id: 'agent-instance-1',
+				request: new Request('https://example.com/flue/agents/assistant/agent-instance-1'),
+				handler: async () => {
+					calls.push('handler');
+					return null;
+				},
+				createContext,
+				admitAttachedSubmission: async (payload, _request, onEvent) => {
+					calls.push(`admit:${payload.message}`);
+					await onEvent?.({ type: 'idle', instanceId: 'agent-instance-1' });
+					return 'done';
+				},
+			},
+		);
+
+		expect(calls).toEqual(['admit:Hello']);
+		expect(connection.messages).toEqual([
+			{ version: 1, type: 'started', requestId: 'prompt-1' },
+			{
+				version: 1,
+				type: 'event',
+				requestId: 'prompt-1',
+				event: { type: 'idle', instanceId: 'agent-instance-1' },
+			},
+			{ version: 1, type: 'result', requestId: 'prompt-1', result: 'done' },
+		]);
 	});
 
 	it('rejects oversized messages when a Cloudflare agent socket exceeds the byte limit', async () => {

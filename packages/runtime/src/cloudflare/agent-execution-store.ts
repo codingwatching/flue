@@ -1,4 +1,9 @@
-import type { DispatchInput } from '../runtime/dispatch-queue.ts';
+import type {
+	AgentSubmissionInput,
+	DirectSubmissionInput,
+	DispatchInput,
+} from '../runtime/dispatch-queue.ts';
+import { isDispatchSubmissionInput } from '../runtime/dispatch-queue.ts';
 import { createSessionStorageKey } from '../session-identity.ts';
 import type { SessionData, SessionStore } from '../types.ts';
 
@@ -19,12 +24,13 @@ interface DurableObjectStorage {
 
 type SqlAgentSubmissionStatus = 'queued' | 'running' | 'completed' | 'error';
 
-export interface SqlAgentDispatchSubmission {
+export interface SqlAgentSubmission {
 	readonly sequence: number;
 	readonly submissionId: string;
 	readonly session: string;
 	readonly sessionKey: string;
-	readonly input: DispatchInput;
+	readonly kind: 'dispatch' | 'direct';
+	readonly input: AgentSubmissionInput;
 	readonly status: SqlAgentSubmissionStatus;
 	readonly acceptedAt: number;
 	readonly attemptId?: string;
@@ -36,23 +42,23 @@ export interface SqlAgentDispatchSubmission {
 }
 
 export interface SqlAgentSubmissionStore {
-	getDispatch(submissionId: string): SqlAgentDispatchSubmission | null;
-	admitDispatch(input: DispatchInput): SqlAgentDispatchSubmission;
-	adoptLegacyDispatches(inputs: readonly DispatchInput[]): SqlAgentDispatchSubmission[];
-	hasUnsettledDispatches(): boolean;
-	listQueuedDispatches(): SqlAgentDispatchSubmission[];
-	listRunnableDispatches(): SqlAgentDispatchSubmission[];
-	listRunningDispatches(): SqlAgentDispatchSubmission[];
-	hasUnsettledDispatchForSession(instanceId: string, session: string): boolean;
-	claimDispatch(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null;
-	markDispatchInputApplied(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null;
-	requestDispatchRecovery(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null;
-	requeueDispatchBeforeInputApplied(
+	getSubmission(submissionId: string): SqlAgentSubmission | null;
+	admitDispatch(input: DispatchInput): SqlAgentSubmission;
+	admitDirect(input: DirectSubmissionInput): SqlAgentSubmission;
+	adoptLegacyDispatches(inputs: readonly DispatchInput[]): SqlAgentSubmission[];
+	hasUnsettledSubmissions(): boolean;
+	listQueuedSubmissions(): SqlAgentSubmission[];
+	listRunnableSubmissions(): SqlAgentSubmission[];
+	listRunningSubmissions(): SqlAgentSubmission[];
+	claimSubmission(submissionId: string, attemptId: string): SqlAgentSubmission | null;
+	markSubmissionInputApplied(submissionId: string, attemptId: string): SqlAgentSubmission | null;
+	requestSubmissionRecovery(submissionId: string, attemptId: string): SqlAgentSubmission | null;
+	requeueSubmissionBeforeInputApplied(
 		submissionId: string,
 		attemptId: string,
-	): SqlAgentDispatchSubmission | null;
-	completeDispatch(submissionId: string, attemptId: string): void;
-	failDispatch(submissionId: string, attemptId: string, error: unknown): void;
+	): SqlAgentSubmission | null;
+	completeSubmission(submissionId: string, attemptId: string): boolean;
+	failSubmission(submissionId: string, attemptId: string, error: unknown): boolean;
 }
 
 export interface SqlAgentExecutionStore {
@@ -130,41 +136,25 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 		private transactionSync: NonNullable<DurableObjectStorage['transactionSync']>,
 	) {}
 
-	getDispatch(submissionId: string): SqlAgentDispatchSubmission | null {
-		const row = this.readDispatchRow(submissionId);
-		return row ? parseDispatchSubmission(row) : null;
+	getSubmission(submissionId: string): SqlAgentSubmission | null {
+		const row = this.readSubmissionRow(submissionId);
+		return row ? parseSubmission(row) : null;
 	}
 
-	admitDispatch(input: DispatchInput): SqlAgentDispatchSubmission {
-		const payload = JSON.stringify(input);
-		const acceptedAt = Date.parse(input.acceptedAt);
-		if (!Number.isFinite(acceptedAt)) {
-			throw new Error('[flue] Internal dispatch admission received an invalid acceptedAt timestamp.');
-		}
-		this.sql.exec(
-			`INSERT OR IGNORE INTO flue_agent_submissions
-			 (submission_id, session, session_key, kind, payload, status, accepted_at)
-			 VALUES (?, ?, ?, 'dispatch', ?, 'queued', ?)`,
-			input.dispatchId,
-			input.session,
-			createSessionStorageKey(input.id, 'default', input.session),
-			payload,
-			acceptedAt,
-		);
-		const row = this.readDispatchRow(input.dispatchId);
-		if (!row) throw new Error('[flue] Durable dispatch admission did not create a submission row.');
-		if (row.payload !== payload) {
-			throw new SqlAgentSubmissionConflictError('[flue] Conflicting internal dispatch replay.');
-		}
-		return parseDispatchSubmission(row);
+	admitDispatch(input: DispatchInput): SqlAgentSubmission {
+		return this.admitSubmission('dispatch', input.dispatchId, input);
 	}
 
-	adoptLegacyDispatches(inputs: readonly DispatchInput[]): SqlAgentDispatchSubmission[] {
+	admitDirect(input: DirectSubmissionInput): SqlAgentSubmission {
+		return this.admitSubmission('direct', input.submissionId, input);
+	}
+
+	adoptLegacyDispatches(inputs: readonly DispatchInput[]): SqlAgentSubmission[] {
 		const unique = new Map<string, DispatchInput>();
 		for (const input of inputs) {
 			const payload = JSON.stringify(input);
-			const row = this.readDispatchRow(input.dispatchId);
-			if (row && row.payload !== payload) {
+			const row = this.readSubmissionRow(input.dispatchId);
+			if (row && (row.kind !== 'dispatch' || row.payload !== payload)) {
 				throw new SqlAgentSubmissionConflictError('[flue] Conflicting legacy dispatch adoption.');
 			}
 			const prior = unique.get(input.dispatchId);
@@ -173,7 +163,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			}
 			if (!prior) unique.set(input.dispatchId, input);
 		}
-		const missing = [...unique.values()].filter((input) => !this.readDispatchRow(input.dispatchId));
+		const missing = [...unique.values()].filter((input) => !this.readSubmissionRow(input.dispatchId));
 		const adopt = () => {
 			const first = this.sql
 				.exec('SELECT MIN(sequence) AS sequence FROM flue_agent_submissions')
@@ -183,10 +173,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 				const batch = missing.slice(offset, offset + 16);
 				const values: unknown[] = [];
 				for (const input of batch) {
-					const acceptedAt = Date.parse(input.acceptedAt);
-					if (!Number.isFinite(acceptedAt)) {
-						throw new Error('[flue] Legacy dispatch adoption received an invalid acceptedAt timestamp.');
-					}
+					const acceptedAt = parseAcceptedAt(input.acceptedAt, 'Legacy dispatch adoption');
 					values.push(
 						sequence++,
 						input.dispatchId,
@@ -206,100 +193,83 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 		};
 		if (missing.length > 0) this.transactionSync(adopt);
 		return inputs.map((input) => {
-			const submission = this.getDispatch(input.dispatchId);
-			if (!submission) throw new Error('[flue] Legacy dispatch adoption did not create a submission row.');
+			const submission = this.getSubmission(input.dispatchId);
+			if (!submission || submission.kind !== 'dispatch') {
+				throw new Error('[flue] Legacy dispatch adoption did not create a submission row.');
+			}
 			return submission;
 		});
 	}
 
-	hasUnsettledDispatches(): boolean {
+	hasUnsettledSubmissions(): boolean {
 		return (
 			this.sql
 				.exec(
 					`SELECT 1
 					 FROM flue_agent_submissions
-					 WHERE kind = 'dispatch' AND status IN ('queued', 'running')
+					 WHERE status IN ('queued', 'running')
 					 LIMIT 1`,
 				)
 				.toArray().length > 0
 		);
 	}
 
-	listQueuedDispatches(): SqlAgentDispatchSubmission[] {
-		return this.parseQueuedRows(
+	listQueuedSubmissions(): SqlAgentSubmission[] {
+		return this.parseOperationalRows(
 			this.sql
 				.exec(
-					`SELECT sequence, submission_id, session, session_key, kind, payload, status,
-					        accepted_at, attempt_id, input_applied_at, recovery_requested_at, started_at, completed_at, error
+					`SELECT ${submissionColumns}
 					 FROM flue_agent_submissions
-					 WHERE kind = 'dispatch' AND status = 'queued'
+					 WHERE status = 'queued'
 					 ORDER BY sequence ASC`,
 				)
 				.toArray(),
+			'queued',
 		);
 	}
 
-	listRunnableDispatches(): SqlAgentDispatchSubmission[] {
+	listRunnableSubmissions(): SqlAgentSubmission[] {
 		const rows = this.sql
 			.exec(
-				`SELECT current.sequence, current.submission_id, current.session, current.session_key,
-				        current.kind, current.payload, current.status, current.accepted_at,
-				        current.attempt_id, current.input_applied_at, current.recovery_requested_at,
-				        current.started_at, current.completed_at, current.error
+				`SELECT ${submissionColumnsFor('current')}
 				 FROM flue_agent_submissions AS current
-				 WHERE current.kind = 'dispatch' AND current.status = 'queued'
+				 WHERE current.status = 'queued'
 				   AND NOT EXISTS (
 				     SELECT 1
 				     FROM flue_agent_submissions AS earlier
-				     WHERE earlier.kind = 'dispatch'
-				       AND earlier.session_key = current.session_key
+				     WHERE earlier.session_key = current.session_key
 				       AND earlier.status IN ('queued', 'running')
 				       AND earlier.sequence < current.sequence
 				   )
 				 ORDER BY current.sequence ASC`,
 			)
 			.toArray();
-		return this.parseQueuedRows(rows);
+		return this.parseOperationalRows(rows, 'queued');
 	}
 
-	listRunningDispatches(): SqlAgentDispatchSubmission[] {
-		return this.parseRunningRows(
+	listRunningSubmissions(): SqlAgentSubmission[] {
+		return this.parseOperationalRows(
 			this.sql
 				.exec(
-					`SELECT sequence, submission_id, session, session_key, kind, payload, status,
-					        accepted_at, attempt_id, input_applied_at, recovery_requested_at, started_at, completed_at, error
+					`SELECT ${submissionColumns}
 					 FROM flue_agent_submissions
-					 WHERE kind = 'dispatch' AND status = 'running'
+					 WHERE status = 'running'
 					 ORDER BY sequence ASC`,
 				)
 				.toArray(),
+			'running',
 		);
 	}
 
-	hasUnsettledDispatchForSession(instanceId: string, session: string): boolean {
-		return (
-			this.sql
-				.exec(
-					`SELECT 1
-					 FROM flue_agent_submissions
-					 WHERE kind = 'dispatch' AND session_key = ? AND status IN ('queued', 'running')
-					 LIMIT 1`,
-					createSessionStorageKey(instanceId, 'default', session),
-				)
-				.toArray().length > 0
-		);
-	}
-
-	claimDispatch(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null {
+	claimSubmission(submissionId: string, attemptId: string): SqlAgentSubmission | null {
 		this.sql.exec(
 			`UPDATE flue_agent_submissions AS current
 			 SET status = 'running', attempt_id = ?, started_at = ?
-			 WHERE current.submission_id = ? AND current.kind = 'dispatch' AND current.status = 'queued'
+			 WHERE current.submission_id = ? AND current.status = 'queued'
 			   AND NOT EXISTS (
 			     SELECT 1
 			     FROM flue_agent_submissions AS earlier
-			     WHERE earlier.kind = 'dispatch'
-			       AND earlier.session_key = current.session_key
+			     WHERE earlier.session_key = current.session_key
 			       AND earlier.status IN ('queued', 'running')
 			       AND earlier.sequence < current.sequence
 			   )`,
@@ -307,106 +277,132 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			Date.now(),
 			submissionId,
 		);
-		const submission = this.getDispatch(submissionId);
+		const submission = this.getSubmission(submissionId);
 		return submission?.status === 'running' && submission.attemptId === attemptId
 			? submission
 			: null;
 	}
 
-	markDispatchInputApplied(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null {
+	markSubmissionInputApplied(submissionId: string, attemptId: string): SqlAgentSubmission | null {
 		this.sql.exec(
 			`UPDATE flue_agent_submissions
 			 SET input_applied_at = COALESCE(input_applied_at, ?)
-			 WHERE submission_id = ? AND kind = 'dispatch' AND status = 'running' AND attempt_id = ?`,
+			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?`,
 			Date.now(),
 			submissionId,
 			attemptId,
 		);
-		const submission = this.getDispatch(submissionId);
-		return submission?.status === 'running' && submission.attemptId === attemptId
-			? submission
-			: null;
+		return this.getOwnedRunningSubmission(submissionId, attemptId);
 	}
 
-	requestDispatchRecovery(submissionId: string, attemptId: string): SqlAgentDispatchSubmission | null {
+	requestSubmissionRecovery(submissionId: string, attemptId: string): SqlAgentSubmission | null {
 		this.sql.exec(
 			`UPDATE flue_agent_submissions
 			 SET recovery_requested_at = COALESCE(recovery_requested_at, ?)
-			 WHERE submission_id = ? AND kind = 'dispatch' AND status = 'running' AND attempt_id = ?`,
+			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?`,
 			Date.now(),
 			submissionId,
 			attemptId,
 		);
-		const submission = this.getDispatch(submissionId);
-		return submission?.status === 'running' && submission.attemptId === attemptId
-			? submission
-			: null;
+		return this.getOwnedRunningSubmission(submissionId, attemptId);
 	}
 
-	requeueDispatchBeforeInputApplied(
+	requeueSubmissionBeforeInputApplied(
 		submissionId: string,
 		attemptId: string,
-	): SqlAgentDispatchSubmission | null {
+	): SqlAgentSubmission | null {
 		this.sql.exec(
 			`UPDATE flue_agent_submissions
 			 SET status = 'queued', attempt_id = NULL, recovery_requested_at = NULL, started_at = NULL
-			 WHERE submission_id = ? AND kind = 'dispatch' AND status = 'running'
+			 WHERE submission_id = ? AND status = 'running'
 			   AND attempt_id = ? AND input_applied_at IS NULL`,
 			submissionId,
 			attemptId,
 		);
-		const submission = this.getDispatch(submissionId);
+		const submission = this.getSubmission(submissionId);
 		return submission?.status === 'queued' ? submission : null;
 	}
 
-	completeDispatch(submissionId: string, attemptId: string): void {
+	completeSubmission(submissionId: string, attemptId: string): boolean {
 		this.sql.exec(
 			`UPDATE flue_agent_submissions
 			 SET status = 'completed', completed_at = ?, error = NULL
-			 WHERE submission_id = ? AND kind = 'dispatch' AND status = 'running' AND attempt_id = ?`,
+			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?`,
 			Date.now(),
 			submissionId,
 			attemptId,
 		);
+		const submission = this.getSubmission(submissionId);
+		return submission?.status === 'completed' && submission.attemptId === attemptId;
 	}
 
-	failDispatch(submissionId: string, attemptId: string, error: unknown): void {
+	failSubmission(submissionId: string, attemptId: string, error: unknown): boolean {
 		this.sql.exec(
 			`UPDATE flue_agent_submissions
 			 SET status = 'error', completed_at = ?, error = ?
-			 WHERE submission_id = ? AND kind = 'dispatch' AND status = 'running' AND attempt_id = ?`,
+			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?`,
 			Date.now(),
 			error instanceof Error ? error.message : String(error),
 			submissionId,
 			attemptId,
 		);
+		const submission = this.getSubmission(submissionId);
+		return submission?.status === 'error' && submission.attemptId === attemptId;
 	}
 
-	private parseQueuedRows(rows: SqlRow[]): SqlAgentDispatchSubmission[] {
-		return this.parseOperationalRows(rows, 'queued');
+	private admitSubmission(
+		kind: SqlAgentSubmission['kind'],
+		submissionId: string,
+		input: AgentSubmissionInput,
+	): SqlAgentSubmission {
+		const payload = JSON.stringify(input);
+		const acceptedAt = parseAcceptedAt(input.acceptedAt, `${kind} admission`);
+		this.sql.exec(
+			`INSERT OR IGNORE INTO flue_agent_submissions
+			 (submission_id, session, session_key, kind, payload, status, accepted_at)
+			 VALUES (?, ?, ?, ?, ?, 'queued', ?)`,
+			submissionId,
+			input.session,
+			createSessionStorageKey(input.id, 'default', input.session),
+			kind,
+			payload,
+			acceptedAt,
+		);
+		const row = this.readSubmissionRow(submissionId);
+		if (!row) throw new Error(`[flue] Durable ${kind} admission did not create a submission row.`);
+		if (row.kind !== kind || row.payload !== payload) {
+			throw new SqlAgentSubmissionConflictError(`[flue] Conflicting internal ${kind} replay.`);
+		}
+		return parseSubmission(row);
 	}
 
-	private parseRunningRows(rows: SqlRow[]): SqlAgentDispatchSubmission[] {
-		return this.parseOperationalRows(rows, 'running');
+	private getOwnedRunningSubmission(
+		submissionId: string,
+		attemptId: string,
+	): SqlAgentSubmission | null {
+		const submission = this.getSubmission(submissionId);
+		return submission?.status === 'running' && submission.attemptId === attemptId
+			? submission
+			: null;
 	}
 
 	private parseOperationalRows(
 		rows: SqlRow[],
 		status: Extract<SqlAgentSubmissionStatus, 'queued' | 'running'>,
-	): SqlAgentDispatchSubmission[] {
-		const submissions: SqlAgentDispatchSubmission[] = [];
+	): SqlAgentSubmission[] {
+		const submissions: SqlAgentSubmission[] = [];
 		for (const row of rows) {
 			try {
-				submissions.push(parseDispatchSubmission(row));
+				submissions.push(parseSubmission(row));
 			} catch (error) {
 				if (typeof row.sequence !== 'number') throw error;
-				this.failDispatchSequence(row.sequence, status, error);
+				this.failSubmissionSequence(row.sequence, status, error);
 			}
 		}
 		return submissions;
 	}
 
-	private failDispatchSequence(
+	private failSubmissionSequence(
 		sequence: number,
 		status: Extract<SqlAgentSubmissionStatus, 'queued' | 'running'>,
 		error: unknown,
@@ -414,7 +410,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 		this.sql.exec(
 			`UPDATE flue_agent_submissions
 			 SET status = 'error', completed_at = ?, error = ?
-			 WHERE sequence = ? AND kind = 'dispatch' AND status = ?`,
+			 WHERE sequence = ? AND status = ?`,
 			Date.now(),
 			error instanceof Error ? error.message : String(error),
 			sequence,
@@ -422,13 +418,12 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 		);
 	}
 
-	private readDispatchRow(submissionId: string): SqlRow | undefined {
+	private readSubmissionRow(submissionId: string): SqlRow | undefined {
 		return this.sql
 			.exec(
-				`SELECT sequence, submission_id, session, session_key, kind, payload, status,
-				        accepted_at, attempt_id, input_applied_at, recovery_requested_at, started_at, completed_at, error
+				`SELECT ${submissionColumns}
 				 FROM flue_agent_submissions
-				 WHERE submission_id = ? AND kind = 'dispatch'
+				 WHERE submission_id = ?
 				 LIMIT 1`,
 				submissionId,
 			)
@@ -436,13 +431,23 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 	}
 }
 
-function parseDispatchSubmission(row: SqlRow): SqlAgentDispatchSubmission {
+const submissionColumns =
+	'sequence, submission_id, session, session_key, kind, payload, status, accepted_at, attempt_id, input_applied_at, recovery_requested_at, started_at, completed_at, error';
+
+function submissionColumnsFor(table: string): string {
+	return submissionColumns
+		.split(', ')
+		.map((column) => `${table}.${column}`)
+		.join(', ');
+}
+
+function parseSubmission(row: SqlRow): SqlAgentSubmission {
 	if (
 		typeof row.sequence !== 'number' ||
 		typeof row.submission_id !== 'string' ||
 		typeof row.session !== 'string' ||
 		typeof row.session_key !== 'string' ||
-		row.kind !== 'dispatch' ||
+		(row.kind !== 'dispatch' && row.kind !== 'direct') ||
 		typeof row.payload !== 'string' ||
 		(row.status !== 'queued' &&
 			row.status !== 'running' &&
@@ -465,30 +470,18 @@ function parseDispatchSubmission(row: SqlRow): SqlAgentDispatchSubmission {
 		(row.status === 'running' &&
 			(typeof row.attempt_id !== 'string' || typeof row.started_at !== 'number'))
 	) {
-		throw new Error('[flue] Persisted dispatch submission row is malformed.');
+		throw new Error('[flue] Persisted agent submission row is malformed.');
 	}
-	const input = JSON.parse(row.payload) as DispatchInput;
-	if (
-		!input ||
-		typeof input !== 'object' ||
-		typeof input.dispatchId !== 'string' ||
-		typeof input.agent !== 'string' ||
-		typeof input.id !== 'string' ||
-		typeof input.session !== 'string' ||
-		input.input === undefined ||
-		typeof input.acceptedAt !== 'string' ||
-		input.dispatchId !== row.submission_id ||
-		input.session !== row.session ||
-		createSessionStorageKey(input.id, 'default', input.session) !== row.session_key ||
-		Date.parse(input.acceptedAt) !== row.accepted_at
-	) {
-		throw new Error('[flue] Persisted dispatch submission payload is malformed.');
+	const input = JSON.parse(row.payload) as unknown;
+	if (!isSubmissionPayload(input, row)) {
+		throw new Error('[flue] Persisted agent submission payload is malformed.');
 	}
 	return {
 		sequence: row.sequence,
 		submissionId: row.submission_id,
 		session: row.session,
 		sessionKey: row.session_key,
+		kind: row.kind,
 		input,
 		status: row.status,
 		acceptedAt: row.accepted_at,
@@ -501,6 +494,56 @@ function parseDispatchSubmission(row: SqlRow): SqlAgentDispatchSubmission {
 		...(typeof row.completed_at === 'number' ? { completedAt: row.completed_at } : {}),
 		...(typeof row.error === 'string' ? { error: row.error } : {}),
 	};
+}
+
+function isSubmissionPayload(input: unknown, row: SqlRow): input is AgentSubmissionInput {
+	if (!input || typeof input !== 'object') return false;
+	const value = input as Partial<AgentSubmissionInput>;
+	if (
+		typeof value.agent !== 'string' ||
+		typeof value.id !== 'string' ||
+		typeof value.session !== 'string' ||
+		typeof value.acceptedAt !== 'string' ||
+		value.session !== row.session ||
+		createSessionStorageKey(value.id, 'default', value.session) !== row.session_key ||
+		Date.parse(value.acceptedAt) !== row.accepted_at
+	) {
+		return false;
+	}
+	if (row.kind === 'dispatch') {
+		return (
+		'dispatchId' in value &&
+		typeof value.dispatchId === 'string' &&
+		value.dispatchId === row.submission_id &&
+		'input' in value &&
+		value.input !== undefined
+		);
+	}
+	return (
+		'submissionId' in value &&
+		typeof value.submissionId === 'string' &&
+		value.submissionId === row.submission_id &&
+		'payload' in value &&
+		isDirectPayload(value.payload) &&
+		!isDispatchSubmissionInput(value as AgentSubmissionInput)
+	);
+}
+
+function isDirectPayload(value: unknown): boolean {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+	const payload = value as { message?: unknown; session?: unknown };
+	return (
+		typeof payload.message === 'string' &&
+		(payload.session === undefined || typeof payload.session === 'string')
+	);
+}
+
+function parseAcceptedAt(value: string, label: string): number {
+	const acceptedAt = Date.parse(value);
+	if (!Number.isFinite(acceptedAt)) {
+		throw new Error(`[flue] Internal ${label} received an invalid acceptedAt timestamp.`);
+	}
+	return acceptedAt;
 }
 
 function ensureSessionTable(sql: SqlStorage): void {

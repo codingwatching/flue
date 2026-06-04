@@ -20,10 +20,14 @@ import type {
 	FlueEventCallback,
 } from '../types.ts';
 import {
+	type AgentSubmissionInputInspection,
+	type AttachedAgentSubmissionAdmission,
 	assertCurrentDispatchInput,
+	type DirectSubmissionInput,
 	type DispatchInput,
 	type DispatchInputInspection,
 	type DispatchProcessor,
+	type ProcessAgentSubmissionInputOptions,
 	type ProcessDispatchInputOptions,
 } from './dispatch-queue.ts';
 import { streamActiveRunEvents } from './handle-run-routes.ts';
@@ -44,6 +48,14 @@ interface DirectRequestSession {
 interface DispatchSession {
 	inspectDispatchInput?(input: DispatchInput): DispatchInputInspection;
 	processDispatchInput(input: DispatchInput, options?: ProcessDispatchInputOptions): PromiseLike<unknown>;
+}
+
+interface DirectSubmissionSession {
+	inspectDirectSubmissionInput?(input: DirectSubmissionInput): AgentSubmissionInputInspection;
+	processDirectSubmissionInput(
+		input: DirectSubmissionInput,
+		options?: ProcessAgentSubmissionInputOptions,
+	): PromiseLike<unknown>;
 }
 
 export interface AgentSessionTarget {
@@ -116,6 +128,21 @@ export function createDispatchInputInspectionHandler(
 	return (ctx) => inspectAgentDispatchInput(ctx, agent, input);
 }
 
+export function createDirectSubmissionAgentHandler(
+	agent: CreatedAgentHandler,
+	input: DirectSubmissionInput,
+	options?: ProcessAgentSubmissionInputOptions,
+): AgentHandler {
+	return (ctx) => processAgentDirectSubmission(ctx, agent, input, options);
+}
+
+export function createDirectSubmissionInputInspectionHandler(
+	agent: CreatedAgentHandler,
+	input: DirectSubmissionInput,
+): AgentHandler {
+	return (ctx) => inspectAgentDirectSubmissionInput(ctx, agent, input);
+}
+
 export async function reserveDispatchAgentSession(
 	target: AgentSessionTarget,
 	payload: unknown,
@@ -145,6 +172,28 @@ async function inspectAgentDispatchInput(
 	return session.inspectDispatchInput(input);
 }
 
+async function processAgentDirectSubmission(
+	ctx: FlueContextInternal,
+	agent: CreatedAgentHandler,
+	input: DirectSubmissionInput,
+	options?: ProcessAgentSubmissionInputOptions,
+): Promise<unknown> {
+	const session = await openAgentDirectSubmissionSession(ctx, agent, input);
+	return session.processDirectSubmissionInput(input, options);
+}
+
+async function inspectAgentDirectSubmissionInput(
+	ctx: FlueContextInternal,
+	agent: CreatedAgentHandler,
+	input: DirectSubmissionInput,
+): Promise<AgentSubmissionInputInspection> {
+	const session = await openAgentDirectSubmissionSession(ctx, agent, input);
+	if (!session.inspectDirectSubmissionInput) {
+		throw new Error('[flue] Internal session does not support direct input inspection.');
+	}
+	return session.inspectDirectSubmissionInput(input);
+}
+
 async function openAgentDispatchSession(
 	ctx: FlueContextInternal,
 	agent: CreatedAgentHandler,
@@ -154,6 +203,19 @@ async function openAgentDispatchSession(
 	const session = await harness.session(input.session);
 	if (!isDispatchSession(session)) {
 		throw new Error('[flue] Internal session does not support dispatch input processing.');
+	}
+	return session;
+}
+
+async function openAgentDirectSubmissionSession(
+	ctx: FlueContextInternal,
+	agent: CreatedAgentHandler,
+	input: DirectSubmissionInput,
+): Promise<DirectSubmissionSession> {
+	const harness = await ctx.initializeCreatedAgent(agent, undefined);
+	const session = await harness.session(input.session);
+	if (!isDirectSubmissionSession(session)) {
+		throw new Error('[flue] Internal session does not support direct input processing.');
 	}
 	return session;
 }
@@ -185,6 +247,14 @@ function isDispatchSession(value: unknown): value is DispatchSession {
 		!!value &&
 		typeof value === 'object' &&
 		typeof (value as DispatchSession).processDispatchInput === 'function'
+	);
+}
+
+function isDirectSubmissionSession(value: unknown): value is DirectSubmissionSession {
+	return (
+		!!value &&
+		typeof value === 'object' &&
+		typeof (value as DirectSubmissionSession).processDirectSubmissionInput === 'function'
 	);
 }
 
@@ -281,6 +351,7 @@ export interface HandleAgentOptions {
 	handler: AgentHandler;
 	createContext: CreateContextFn;
 	runHandler?: RunHandlerFn;
+	admitAttachedSubmission?: AttachedAgentSubmissionAdmission;
 }
 
 export interface HandleWorkflowOptions {
@@ -326,6 +397,7 @@ export async function handleAgentRequest(opts: HandleAgentOptions): Promise<Resp
 			request,
 			createContext,
 			runHandler,
+			admitAttachedSubmission: opts.admitAttachedSubmission,
 		};
 		if ((request.headers.get('accept') || '').includes('text/event-stream')) {
 			return runDirectSseMode(directOptions);
@@ -403,6 +475,7 @@ export interface DirectAttachedOptions {
 	request: Request;
 	createContext: CreateContextFn;
 	runHandler?: RunHandlerFn;
+	admitAttachedSubmission?: AttachedAgentSubmissionAdmission;
 	onEvent?: AttachedAgentEventCallback;
 	emitIdleOnComplete?: boolean;
 }
@@ -750,6 +823,9 @@ async function runDirectSyncMode(opts: DirectAttachedOptions): Promise<Response>
 }
 
 export async function invokeDirectAttached(opts: DirectAttachedOptions): Promise<unknown> {
+	if (opts.admitAttachedSubmission) {
+		return opts.admitAttachedSubmission(opts.payload, opts.request, opts.onEvent);
+	}
 	const sessionLock = acquireDirectAgentSessionLock(opts.agentName, opts.id, opts.payload);
 	try {
 		const ctx = opts.createContext(opts.id, undefined, opts.payload, opts.request);
