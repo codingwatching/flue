@@ -14,7 +14,6 @@ import {
 	InMemoryDispatchQueue,
 	InMemorySessionStore,
 	resetFlueRuntimeForTests,
-	validateAgentDispatchAdmission,
 } from '../src/internal.ts';
 import {
 	createAgentSubmissionHandler,
@@ -24,6 +23,7 @@ import {
 	createDispatchAgentSubmissionInput,
 	type DirectAgentSubmissionInput,
 } from '../src/runtime/agent-submissions.ts';
+import { assertAgentDispatchAdmissionInput } from '../src/runtime/handle-agent.ts';
 import type { AgentConfig, FlueHarness, FlueSession } from '../src/types.ts';
 import { createNoopSessionEnv } from './fixtures/session-env.ts';
 
@@ -310,19 +310,17 @@ describe('dispatch()', () => {
 		).rejects.toThrow('session names beginning with "task:" are reserved for delegated tasks');
 	});
 
-	it('rejects a reserved task session name when durable dispatch admission receives internal input', async () => {
-		await expect(
-			validateAgentDispatchAdmission({
-				input: {
-					dispatchId: 'dispatch:task-session',
-					agent: 'moderator',
-					id: 'guild:task-session',
-					session: 'task:default:child',
-					input: null,
-					acceptedAt: '2026-06-02T00:00:00.000Z',
-				},
+	it('rejects a reserved task session name when durable dispatch admission receives internal input', () => {
+		expect(() =>
+			assertAgentDispatchAdmissionInput({
+				dispatchId: 'dispatch:task-session',
+				agent: 'moderator',
+				id: 'guild:task-session',
+				session: 'task:default:child',
+				input: null,
+				acceptedAt: '2026-06-02T00:00:00.000Z',
 			}),
-		).rejects.toThrow('session names beginning with "task:" are reserved for delegated tasks');
+		).toThrow('session names beginning with "task:" are reserved for delegated tasks');
 	});
 
 	it('rejects calls when the runtime has no dispatch queue', async () => {
@@ -869,7 +867,7 @@ describe('dispatched session processing', () => {
 			defaultStore: new InMemorySessionStore(),
 		});
 
-		await expect(createAgentSubmissionInspectionHandler(agent, createDispatchAgentSubmissionInput(input))(ctx)).resolves.toBe('applied');
+		await expect(createAgentSubmissionInspectionHandler(agent, createDispatchAgentSubmissionInput(input))(ctx)).resolves.toBe('uncertain');
 		expect(provider.state.callCount).toBe(0);
 	});
 

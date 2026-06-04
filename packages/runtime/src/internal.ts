@@ -22,11 +22,7 @@ export { createFlueContext } from './client.ts';
 // they pull in `cloudflare:workers`, a virtual module Node can't resolve.
 // The generated CF entry imports them from there directly.
 export { CLOUDFLARE_AGENT_INTERNAL_DISPATCH_PATH, createCloudflareAgentRuntime } from './cloudflare/agent-coordinator.ts';
-export {
-	createSqlAgentExecutionStore,
-	createSqlSessionStore,
-	SqlAgentSubmissionConflictError,
-} from './cloudflare/agent-execution-store.ts';
+export { createSqlSessionStore } from './cloudflare/agent-execution-store.ts';
 export { createDurableRunStore } from './cloudflare/run-store.ts';
 export { InMemoryRunRegistry } from './node/run-registry.ts';
 export { InMemoryRunStore } from './node/run-store.ts';
@@ -57,11 +53,6 @@ export type {
 } from './runtime/handle-agent.ts';
 // Runtime modules consumed by the generated server entries.
 //
-//   - `handleAgentRequest` handles attached per-agent HTTP prompts (SSE /
-//     sync). Used directly by the Cloudflare entry's `dispatchAgent`
-//     wrapper to layer in DO-specific keepalive handling. The
-//     Node target reaches the same dispatcher through `flue()`.
-//
 //   - `configureFlueRuntime` seeds the module-scoped config that
 //     `flue()` reads at request time. Called once per generated entry,
 //     before the listener (Node) or `default.fetch` (Cloudflare) takes
@@ -77,11 +68,9 @@ export {
 	createAgentDispatchProcessor,
 	createDirectAgentHandler,
 	failRecoveredRun,
-	handleAgentRequest,
 	handleWorkflowRequest,
 	invokeDirectAttached,
 	invokeWorkflowAttached,
-	validateAgentDispatchAdmission,
 } from './runtime/handle-agent.ts';
 export type { HandleRunRouteOptions } from './runtime/handle-run-routes.ts';
 export { handleRunRouteRequest } from './runtime/handle-run-routes.ts';

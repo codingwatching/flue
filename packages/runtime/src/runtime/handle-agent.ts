@@ -15,7 +15,6 @@ import type {
 	AttachedAgentEventCallback,
 	CreatedAgent,
 	DirectAgentPayload,
-	DispatchReceipt,
 	FlueEvent,
 	FlueEventCallback,
 } from '../types.ts';
@@ -72,14 +71,7 @@ export function createAgentDispatchProcessor(options: {
 	};
 }
 
-interface ValidateAgentDispatchAdmissionOptions {
-	input: DispatchInput;
-}
-
-export async function validateAgentDispatchAdmission(
-	options: ValidateAgentDispatchAdmissionOptions,
-): Promise<DispatchReceipt> {
-	const { input } = options;
+export function assertAgentDispatchAdmissionInput(input: unknown): asserts input is DispatchInput {
 	if (!isDispatchInput(input))
 		throw new Error('[flue] Internal dispatch admission received an invalid payload.');
 	if (isTaskSessionName(input.session)) {
@@ -87,7 +79,6 @@ export async function validateAgentDispatchAdmission(
 			'[flue] Internal dispatch admission session names beginning with "task:" are reserved for delegated tasks.',
 		);
 	}
-	return { dispatchId: input.dispatchId, acceptedAt: input.acceptedAt };
 }
 
 async function reserveDispatchAgentSession(

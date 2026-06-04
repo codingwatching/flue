@@ -115,7 +115,6 @@ describe('createSqlAgentExecutionStore()', () => {
 		).toEqual([
 			{ name: 'sequence' },
 			{ name: 'submission_id' },
-			{ name: 'session' },
 			{ name: 'session_key' },
 			{ name: 'kind' },
 			{ name: 'payload' },
@@ -125,7 +124,7 @@ describe('createSqlAgentExecutionStore()', () => {
 			{ name: 'input_applied_at' },
 			{ name: 'recovery_requested_at' },
 			{ name: 'started_at' },
-			{ name: 'completed_at' },
+			{ name: 'settled_at' },
 			{ name: 'error' },
 		]);
 		expect(
@@ -180,21 +179,20 @@ describe('createSqlAgentExecutionStore()', () => {
 			kind: 'submission',
 			submission: {
 				submissionId: 'dispatch-1',
-				session: 'default',
 				sessionKey: 'agent-session:["agent-1","default","default"]',
 				status: 'queued',
 			},
 		});
 	});
 
-	it('rejects conflicting replay when one dispatch id is reused with another payload', () => {
+	it('returns conflict when one dispatch id is reused with another payload', () => {
 		const { sql, transactionSync } = makeFakeSql();
 		const store = createSqlAgentExecutionStore({ sql, transactionSync }, 'FlueAssistantAgent');
 		store.submissions.admitDispatch(dispatchInput());
 
-		expect(() =>
-			store.submissions.admitDispatch(dispatchInput({ input: { text: 'Different' } })),
-		).toThrow('[flue] Conflicting internal dispatch replay.');
+		expect(store.submissions.admitDispatch(dispatchInput({ input: { text: 'Different' } }))).toEqual({
+			kind: 'conflict',
+		});
 	});
 
 	it('orders direct and dispatched submissions together within one session', () => {
@@ -258,9 +256,9 @@ describe('createSqlAgentExecutionStore()', () => {
 		store.submissions.admitDispatch(dispatchInput({ dispatchId: 'healthy' }));
 		db.prepare(
 			`INSERT INTO flue_agent_submissions
-			 (submission_id, session, session_key, kind, payload, status, accepted_at)
-			 VALUES (?, ?, ?, 'dispatch', ?, 'queued', ?)`,
-		).run('malformed', 'other', 'agent-session:["agent-1","default","other"]', '{', 1);
+			 (submission_id, session_key, kind, payload, status, accepted_at)
+			 VALUES (?, ?, 'dispatch', ?, 'queued', ?)`,
+		).run('malformed', 'agent-session:["agent-1","default","other"]', '{', 1);
 
 		expect(store.submissions.listRunnableSubmissions()).toEqual([
 			expect.objectContaining({ submissionId: 'healthy' }),
@@ -269,7 +267,7 @@ describe('createSqlAgentExecutionStore()', () => {
 			db
 				.prepare('SELECT status, error FROM flue_agent_submissions WHERE submission_id = ?')
 				.get('malformed'),
-		).toMatchObject({ status: 'failed', error: expect.any(String) });
+		).toMatchObject({ status: 'settled', error: expect.any(String) });
 	});
 
 	it('terminalizes impossible queued input markers instead of replaying them', () => {
@@ -283,7 +281,7 @@ describe('createSqlAgentExecutionStore()', () => {
 
 		expect(store.submissions.listRunnableSubmissions()).toEqual([]);
 		expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({
-			status: 'failed',
+			status: 'settled',
 			error: expect.any(String),
 		});
 	});
@@ -341,7 +339,7 @@ describe('createSqlAgentExecutionStore()', () => {
 		store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
 		expect(store.submissions.hasUnsettledSubmissions()).toBe(false);
 		expect(store.submissions.listRunningSubmissions()).toEqual([]);
-		expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({ status: 'completed' });
+		expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({ status: 'settled' });
 	});
 
 	it('ignores stale-attempt settlement and keeps the first owning terminal dispatch state', () => {
@@ -356,7 +354,7 @@ describe('createSqlAgentExecutionStore()', () => {
 		store.submissions.failSubmission(attempt('dispatch-1', 'attempt-1'), new Error('later failure'));
 
 		expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({
-			status: 'failed',
+			status: 'settled',
 			error: 'first failure',
 		});
 	});
@@ -381,7 +379,7 @@ describe('createSqlAgentExecutionStore()', () => {
 			),
 		).toBe(true);
 		expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({
-			status: 'failed',
+			status: 'settled',
 			error: 'interrupted',
 		});
 	});
@@ -514,7 +512,7 @@ describe('createSqlAgentExecutionStore()', () => {
 		store.submissions.claimSubmission(attempt('expired-2', 'attempt-2'));
 		store.submissions.completeSubmission(attempt('expired-1', 'attempt-1'));
 		store.submissions.failSubmission(attempt('expired-2', 'attempt-2'), new Error('failed'));
-		db.prepare("UPDATE flue_agent_submissions SET completed_at = 1 WHERE status IN ('completed', 'failed')").run();
+		db.prepare("UPDATE flue_agent_submissions SET settled_at = 1 WHERE status = 'settled'").run();
 
 		expect(store.submissions.cleanupTerminalSubmissions(2, 1)).toBe(1);
 		expect(store.submissions.cleanupTerminalSubmissions(2, 1)).toBe(1);

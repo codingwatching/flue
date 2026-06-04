@@ -23,7 +23,7 @@ interface DurableObjectStorage {
 	transactionSync?<T>(closure: () => T): T;
 }
 
-type SqlAgentSubmissionStatus = 'queued' | 'running' | 'recording_interruption' | 'completed' | 'failed';
+type SqlAgentSubmissionStatus = 'queued' | 'running' | 'recording_interruption' | 'settled';
 
 interface SqlAgentDispatchReceipt {
 	readonly submissionId: string;
@@ -32,7 +32,8 @@ interface SqlAgentDispatchReceipt {
 
 type SqlAgentDispatchAdmission =
 	| { readonly kind: 'submission'; readonly submission: SqlAgentSubmission }
-	| { readonly kind: 'retained_receipt'; readonly receipt: SqlAgentDispatchReceipt };
+	| { readonly kind: 'retained_receipt'; readonly receipt: SqlAgentDispatchReceipt }
+	| { readonly kind: 'conflict' };
 
 export interface SubmissionAttemptRef {
 	readonly submissionId: string;
@@ -42,7 +43,6 @@ export interface SubmissionAttemptRef {
 export interface SqlAgentSubmission {
 	readonly sequence: number;
 	readonly submissionId: string;
-	readonly session: string;
 	readonly sessionKey: string;
 	readonly kind: 'dispatch' | 'direct';
 	readonly input: AgentSubmissionInput;
@@ -52,7 +52,6 @@ export interface SqlAgentSubmission {
 	readonly inputAppliedAt?: number;
 	readonly recoveryRequestedAt?: number;
 	readonly startedAt?: number;
-	readonly completedAt?: number;
 	readonly error?: string;
 }
 
@@ -79,8 +78,6 @@ export interface SqlAgentExecutionStore {
 	readonly sessions: SessionStore;
 	readonly submissions: SqlAgentSubmissionStore;
 }
-
-export class SqlAgentSubmissionConflictError extends Error {}
 
 export function createSqlSessionStore(sql: SqlStorage): SessionStore {
 	ensureSessionTable(sql);
@@ -178,7 +175,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 	admitDirect(input: DirectAgentSubmissionInput): SqlAgentSubmission {
 		const admission = this.admitSubmission(input);
 		if (admission.kind !== 'submission') {
-			throw new Error('[flue] Internal direct admission returned an unexpected retained receipt.');
+			throw new Error('[flue] Internal direct admission returned an unexpected result.');
 		}
 		return admission.submission;
 	}
@@ -267,14 +264,14 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 		this.transactionSync(() => {
 			this.sql.exec(
 				`INSERT OR IGNORE INTO flue_agent_dispatch_receipts (dispatch_id, accepted_at, settled_at)
-				 SELECT submission_id, accepted_at, completed_at
+				 SELECT submission_id, accepted_at, settled_at
 				 FROM flue_agent_submissions
-				 WHERE session_key = ? AND kind = 'dispatch' AND status IN ('completed', 'failed')`,
+				 WHERE session_key = ? AND kind = 'dispatch' AND status = 'settled'`,
 				sessionKey,
 			);
 			this.sql.exec(
 				`DELETE FROM flue_agent_submissions
-				 WHERE session_key = ? AND status IN ('completed', 'failed')`,
+				 WHERE session_key = ? AND status = 'settled'`,
 				sessionKey,
 			);
 			this.sql.exec('DELETE FROM flue_agent_session_deletions WHERE session_key = ?', sessionKey);
@@ -287,7 +284,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 		}
 	}
 
-	cleanupTerminalSubmissions(completedBefore: number, limit = 100): number {
+	cleanupTerminalSubmissions(settledBefore: number, limit = 100): number {
 		if (!Number.isInteger(limit) || limit <= 0) {
 			throw new Error('[flue] Terminal submission cleanup limit must be a positive integer.');
 		}
@@ -295,10 +292,10 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			.exec(
 				`SELECT sequence
 				 FROM flue_agent_submissions
-				 WHERE status IN ('completed', 'failed') AND completed_at < ?
-				 ORDER BY completed_at ASC, sequence ASC
+				 WHERE status = 'settled' AND settled_at < ?
+				 ORDER BY settled_at ASC, sequence ASC
 				 LIMIT ?`,
-				completedBefore,
+				settledBefore,
 				limit,
 			)
 			.toArray();
@@ -308,9 +305,9 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			}
 			this.sql.exec(
 				`DELETE FROM flue_agent_submissions
-				 WHERE sequence = ? AND status IN ('completed', 'failed') AND completed_at < ?`,
+				 WHERE sequence = ? AND status = 'settled' AND settled_at < ?`,
 				row.sequence,
-				completedBefore,
+				settledBefore,
 			);
 		}
 		this.sql.exec(
@@ -322,56 +319,56 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			   ORDER BY settled_at ASC, dispatch_id ASC
 			   LIMIT ?
 			 )`,
-			completedBefore,
+			settledBefore,
 			limit,
 		);
 		return rows.length;
 	}
 
 	claimSubmission(attempt: SubmissionAttemptRef): SqlAgentSubmission | null {
-		this.sql.exec(
-			`UPDATE flue_agent_submissions AS current
-			 SET status = 'running', attempt_id = ?, started_at = ?
-			 WHERE current.submission_id = ? AND current.status = 'queued'
-			   AND NOT EXISTS (
-			     SELECT 1
-			     FROM flue_agent_submissions AS earlier
-			     WHERE earlier.session_key = current.session_key
-			       AND earlier.status IN ('queued', 'running', 'recording_interruption')
-			       AND earlier.sequence < current.sequence
-			   )`,
-			attempt.attemptId,
-			Date.now(),
-			attempt.submissionId,
-		);
-		const submission = this.getSubmission(attempt.submissionId);
-		return submission?.status === 'running' && submission.attemptId === attempt.attemptId
-			? submission
-			: null;
+		const row = this.sql
+			.exec(
+				`UPDATE flue_agent_submissions AS current
+				 SET status = 'running', attempt_id = ?, started_at = ?
+				 WHERE current.submission_id = ? AND current.status = 'queued'
+				   AND NOT EXISTS (
+				     SELECT 1
+				     FROM flue_agent_submissions AS earlier
+				     WHERE earlier.session_key = current.session_key
+				       AND earlier.status IN ('queued', 'running', 'recording_interruption')
+				       AND earlier.sequence < current.sequence
+				   )
+				 RETURNING ${submissionColumns}`,
+				attempt.attemptId,
+				Date.now(),
+				attempt.submissionId,
+			)
+			.toArray()[0];
+		return row ? parseSubmission(row) : null;
 	}
 
 	markSubmissionInputApplied(attempt: SubmissionAttemptRef): boolean {
-		this.sql.exec(
+		return this.updateOwnedSubmission(
 			`UPDATE flue_agent_submissions
 			 SET input_applied_at = COALESCE(input_applied_at, ?)
-			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?`,
+			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?
+			 RETURNING submission_id`,
 			Date.now(),
 			attempt.submissionId,
 			attempt.attemptId,
 		);
-		return this.hasOwnedSubmission(attempt, 'running');
 	}
 
 	requestSubmissionRecovery(attempt: SubmissionAttemptRef): boolean {
-		this.sql.exec(
+		return this.updateOwnedSubmission(
 			`UPDATE flue_agent_submissions
 			 SET recovery_requested_at = COALESCE(recovery_requested_at, ?)
-			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?`,
+			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?
+			 RETURNING submission_id`,
 			Date.now(),
 			attempt.submissionId,
 			attempt.attemptId,
 		);
-		return this.hasOwnedSubmission(attempt, 'running');
 	}
 
 	requeueSubmissionBeforeInputApplied(attempt: SubmissionAttemptRef): boolean {
@@ -391,52 +388,52 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 	}
 
 	beginSubmissionInterruptionRecording(attempt: SubmissionAttemptRef): boolean {
-		this.sql.exec(
+		return this.updateOwnedSubmission(
 			`UPDATE flue_agent_submissions
 			 SET status = 'recording_interruption'
-			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?`,
+			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?
+			 RETURNING submission_id`,
 			attempt.submissionId,
 			attempt.attemptId,
 		);
-		return this.hasOwnedSubmission(attempt, 'recording_interruption');
 	}
 
 	completeSubmission(attempt: SubmissionAttemptRef): boolean {
-		this.sql.exec(
+		return this.updateOwnedSubmission(
 			`UPDATE flue_agent_submissions
-			 SET status = 'completed', completed_at = ?, error = NULL
-			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?`,
+			 SET status = 'settled', settled_at = ?, error = NULL
+			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?
+			 RETURNING submission_id`,
 			Date.now(),
 			attempt.submissionId,
 			attempt.attemptId,
 		);
-		return this.hasOwnedSubmission(attempt, 'completed');
 	}
 
 	failSubmission(attempt: SubmissionAttemptRef, error: unknown): boolean {
-		this.sql.exec(
+		return this.updateOwnedSubmission(
 			`UPDATE flue_agent_submissions
-			 SET status = 'failed', completed_at = ?, error = ?
-			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?`,
+			 SET status = 'settled', settled_at = ?, error = ?
+			 WHERE submission_id = ? AND status = 'running' AND attempt_id = ?
+			 RETURNING submission_id`,
 			Date.now(),
 			error instanceof Error ? error.message : String(error),
 			attempt.submissionId,
 			attempt.attemptId,
 		);
-		return this.hasOwnedSubmission(attempt, 'failed');
 	}
 
 	finishSubmissionInterruptionRecording(attempt: SubmissionAttemptRef, error: unknown): boolean {
-		this.sql.exec(
+		return this.updateOwnedSubmission(
 			`UPDATE flue_agent_submissions
-			 SET status = 'failed', completed_at = ?, error = ?
-			 WHERE submission_id = ? AND status = 'recording_interruption' AND attempt_id = ?`,
+			 SET status = 'settled', settled_at = ?, error = ?
+			 WHERE submission_id = ? AND status = 'recording_interruption' AND attempt_id = ?
+			 RETURNING submission_id`,
 			Date.now(),
 			error instanceof Error ? error.message : String(error),
 			attempt.submissionId,
 			attempt.attemptId,
 		);
-		return this.hasOwnedSubmission(attempt, 'failed');
 	}
 
 	private admitSubmission(input: AgentSubmissionInput): SqlAgentDispatchAdmission {
@@ -457,10 +454,9 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			}
 			this.sql.exec(
 				`INSERT OR IGNORE INTO flue_agent_submissions
-				 (submission_id, session, session_key, kind, payload, status, accepted_at)
-				 VALUES (?, ?, ?, ?, ?, 'queued', ?)`,
+				 (submission_id, session_key, kind, payload, status, accepted_at)
+				 VALUES (?, ?, ?, ?, 'queued', ?)`,
 				submissionId,
-				input.session,
 				sessionKey,
 				kind,
 				payload,
@@ -468,16 +464,13 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 			);
 			const row = this.readSubmissionRow(submissionId);
 			if (!row) throw new Error(`[flue] Durable ${kind} admission did not create a submission row.`);
-			if (row.kind !== kind || row.payload !== payload) {
-				throw new SqlAgentSubmissionConflictError(`[flue] Conflicting internal ${kind} replay.`);
-			}
+			if (row.kind !== kind || row.payload !== payload) return { kind: 'conflict' };
 			return { kind: 'submission', submission: parseSubmission(row) };
 		});
 	}
 
-	private hasOwnedSubmission(attempt: SubmissionAttemptRef, status: SqlAgentSubmissionStatus): boolean {
-		const submission = this.getSubmission(attempt.submissionId);
-		return submission?.status === status && submission.attemptId === attempt.attemptId;
+	private updateOwnedSubmission(query: string, ...bindings: unknown[]): boolean {
+		return this.sql.exec(query, ...bindings).toArray().length > 0;
 	}
 
 	private parseOperationalRows(
@@ -499,7 +492,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 	private failSubmissionSequence(sequence: number, status: 'queued' | 'active', error: unknown): void {
 		this.sql.exec(
 			`UPDATE flue_agent_submissions
-			 SET status = 'failed', completed_at = ?, error = ?
+			 SET status = 'settled', settled_at = ?, error = ?
 			 WHERE sequence = ? AND ${status === 'queued' ? "status = 'queued'" : "status IN ('running', 'recording_interruption')"}`,
 			Date.now(),
 			error instanceof Error ? error.message : String(error),
@@ -521,7 +514,7 @@ class SqlAgentSubmissionStoreImpl implements SqlAgentSubmissionStore {
 }
 
 const submissionColumns =
-	'sequence, submission_id, session, session_key, kind, payload, status, accepted_at, attempt_id, input_applied_at, recovery_requested_at, started_at, completed_at, error';
+	'sequence, submission_id, session_key, kind, payload, status, accepted_at, attempt_id, input_applied_at, recovery_requested_at, started_at, error';
 
 function submissionColumnsFor(table: string): string {
 	return submissionColumns
@@ -534,15 +527,13 @@ function parseSubmission(row: SqlRow): SqlAgentSubmission {
 	if (
 		typeof row.sequence !== 'number' ||
 		typeof row.submission_id !== 'string' ||
-		typeof row.session !== 'string' ||
 		typeof row.session_key !== 'string' ||
 		(row.kind !== 'dispatch' && row.kind !== 'direct') ||
 		typeof row.payload !== 'string' ||
 		(row.status !== 'queued' &&
 			row.status !== 'running' &&
 			row.status !== 'recording_interruption' &&
-			row.status !== 'completed' &&
-			row.status !== 'failed') ||
+			row.status !== 'settled') ||
 		typeof row.accepted_at !== 'number' ||
 		(row.attempt_id !== null && row.attempt_id !== undefined && typeof row.attempt_id !== 'string') ||
 		(row.input_applied_at !== null &&
@@ -569,7 +560,6 @@ function parseSubmission(row: SqlRow): SqlAgentSubmission {
 	return {
 		sequence: row.sequence,
 		submissionId: row.submission_id,
-		session: row.session,
 		sessionKey: row.session_key,
 		kind: row.kind,
 		input,
@@ -581,7 +571,6 @@ function parseSubmission(row: SqlRow): SqlAgentSubmission {
 			? { recoveryRequestedAt: row.recovery_requested_at }
 			: {}),
 		...(typeof row.started_at === 'number' ? { startedAt: row.started_at } : {}),
-		...(typeof row.completed_at === 'number' ? { completedAt: row.completed_at } : {}),
 		...(typeof row.error === 'string' ? { error: row.error } : {}),
 	};
 }
@@ -598,7 +587,6 @@ function isSubmissionPayload(input: unknown, row: SqlRow): input is AgentSubmiss
 			typeof dispatch.agent === 'string' &&
 			typeof dispatch.id === 'string' &&
 			typeof dispatch.session === 'string' &&
-			dispatch.session === row.session &&
 			createSessionStorageKey(dispatch.id, 'default', dispatch.session) === row.session_key &&
 			typeof dispatch.acceptedAt === 'string' &&
 			Date.parse(dispatch.acceptedAt) === row.accepted_at &&
@@ -611,7 +599,6 @@ function isSubmissionPayload(input: unknown, row: SqlRow): input is AgentSubmiss
 		typeof direct.agent === 'string' &&
 		typeof direct.id === 'string' &&
 		typeof direct.session === 'string' &&
-		direct.session === row.session &&
 		createSessionStorageKey(direct.id, 'default', direct.session) === row.session_key &&
 		typeof direct.acceptedAt === 'string' &&
 		Date.parse(direct.acceptedAt) === row.accepted_at &&
@@ -651,7 +638,6 @@ function ensureSubmissionTable(sql: SqlStorage): void {
 		`CREATE TABLE IF NOT EXISTS flue_agent_submissions (
 		 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
 		 submission_id TEXT NOT NULL UNIQUE,
-		 session TEXT NOT NULL,
 		 session_key TEXT NOT NULL,
 		 kind TEXT NOT NULL,
 		 payload TEXT NOT NULL,
@@ -661,7 +647,7 @@ function ensureSubmissionTable(sql: SqlStorage): void {
 		 input_applied_at INTEGER,
 		 recovery_requested_at INTEGER,
 		 started_at INTEGER,
-		 completed_at INTEGER,
+		 settled_at INTEGER,
 		 error TEXT
 		)`,
 	);

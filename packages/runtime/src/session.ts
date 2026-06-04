@@ -2089,12 +2089,12 @@ export class Session implements FlueSession {
 		if (!inputEntry) return 'absent';
 		const following = this.history.getActivePathSince(inputEntry.id);
 		if (following.some((entry) => entry.type === 'message' && entry.message.role === 'user')) {
-			return 'advanced';
+			return 'uncertain';
 		}
 		const assistant = following.findLast(
 			(entry): entry is MessageEntry => entry.type === 'message' && entry.message.role === 'assistant',
 		)?.message as AssistantMessage | undefined;
-		return assistant && isCompletedAssistantResponse(assistant) ? 'completed' : 'applied';
+		return assistant && isCompletedAssistantResponse(assistant) ? 'completed' : 'uncertain';
 	}
 
 	private async runPersistedDispatchInput(

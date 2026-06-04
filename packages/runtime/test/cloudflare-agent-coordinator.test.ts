@@ -24,7 +24,7 @@ function makeFakeSql(events: string[] = []) {
 					if (query.includes('SET recovery_requested_at')) events.push('request-recovery');
 					if (query.includes("SET status = 'queued'")) events.push('requeue');
 					if (query.includes("SET status = 'recording_interruption'")) events.push('begin-interruption-recording');
-					if (query.includes("SET status = 'failed', completed_at")) events.push('finish-interruption-recording');
+					if (query.includes("SET status = 'settled', settled_at")) events.push('finish-interruption-recording');
 					const stmt = db.prepare(query);
 					let rows: unknown[];
 					try {
@@ -105,7 +105,7 @@ function makeRecoveryContext(options: {
 			throw new Error('Unexpected submission processing.');
 		},
 		inspectSubmissionInput() {
-			return options.inspection ?? 'applied';
+			return options.inspection ?? 'uncertain';
 		},
 		async recordSubmissionTerminal(input: AgentSubmissionInterruption) {
 			options.events?.push('record-terminal');
@@ -272,7 +272,7 @@ describe('createCloudflareAgentRuntime()', () => {
 	it('records interruption before settling applied incomplete canonical input as error', async () => {
 		const events: string[] = [];
 		const { storage } = makeFakeSql(events);
-		const recovery = makeRecoveryContext({ inspection: 'applied', events });
+		const recovery = makeRecoveryContext({ inspection: 'uncertain', events });
 		const payloads: unknown[] = [];
 		const runtime = makeRuntime({
 			createdAgent: {} as never,
@@ -291,7 +291,7 @@ describe('createCloudflareAgentRuntime()', () => {
 
 		expect(events).toEqual(['begin-interruption-recording', 'record-terminal', 'finish-interruption-recording']);
 		expect(payloads).toEqual([directInput(), directInput().payload]);
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'failed' });
+		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'settled' });
 	});
 
 	it('resumes recording interruption rows by recording interruption before final SQL settlement', async () => {
@@ -315,7 +315,7 @@ describe('createCloudflareAgentRuntime()', () => {
 		await runtime.onStart(instance, () => {});
 
 		expect(events).toEqual(['record-terminal', 'finish-interruption-recording']);
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'failed' });
+		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'settled' });
 	});
 
 	it('settles interrupted attempts when canonical completion is already persisted', async () => {
@@ -333,7 +333,7 @@ describe('createCloudflareAgentRuntime()', () => {
 
 		await runtime.onStart(instance, () => {});
 
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'completed' });
+		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'settled' });
 	});
 
 	it('starts unrelated queued sessions when interrupted-session inspection fails', async () => {
@@ -377,7 +377,7 @@ describe('createCloudflareAgentRuntime()', () => {
 
 		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
 		await vi.waitFor(() => {
-			expect(executionStore.submissions.getSubmission('direct-2')).toMatchObject({ status: 'completed' });
+			expect(executionStore.submissions.getSubmission('direct-2')).toMatchObject({ status: 'settled' });
 		});
 		expect(consoleError).toHaveBeenCalledWith(
 			'[flue:submission-reconciliation]',
@@ -513,6 +513,6 @@ describe('createCloudflareAgentRuntime()', () => {
 		await runtime.onStart(instance, () => {});
 
 		expect(payloads).toEqual([dispatchInput()]);
-		expect(executionStore.submissions.getSubmission('dispatch-1')).toMatchObject({ status: 'completed' });
+		expect(executionStore.submissions.getSubmission('dispatch-1')).toMatchObject({ status: 'settled' });
 	});
 });

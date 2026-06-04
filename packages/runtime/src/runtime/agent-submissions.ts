@@ -30,7 +30,7 @@ export interface AgentSubmissionInterruption {
 	readonly message: string;
 }
 
-export type AgentSubmissionInspection = 'absent' | 'applied' | 'completed' | 'advanced';
+export type AgentSubmissionInspection = 'absent' | 'completed' | 'uncertain';
 
 export interface ProcessAgentSubmissionOptions {
 	onInputApplied?: () => Promise<void> | void;

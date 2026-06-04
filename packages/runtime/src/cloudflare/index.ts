@@ -41,16 +41,10 @@ export { FlueRegistry } from './registry-do.ts';
 export { createCloudflareRunRegistry } from './run-registry.ts';
 export { store } from './session-store.ts';
 export type {
-	CloudflareAgentWebSocketOptions,
 	CloudflareWebSocketAttachment,
 	CloudflareWebSocketConnection,
 	CloudflareWorkflowWebSocketOptions,
 } from './websocket.ts';
 
-export {
-	connectCloudflareAgentWebSocket,
-	connectCloudflareWorkflowWebSocket,
-	messageCloudflareAgentWebSocket,
-	messageCloudflareWorkflowWebSocket,
-} from './websocket.ts';
+export { connectCloudflareWorkflowWebSocket, messageCloudflareWorkflowWebSocket } from './websocket.ts';
 export { getCloudflareAIBindingApiProvider } from './workers-ai-provider.ts';

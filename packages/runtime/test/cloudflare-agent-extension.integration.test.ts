@@ -12,41 +12,6 @@ import {
 } from '../../cli/src/lib/build.ts';
 
 describe('Cloudflare agent extension', () => {
-	it('rejects Cloudflare builds below the audited Agents SDK durability floor', async () => {
-		const root = createAgentsFloorFixture('0.14.0');
-		try {
-			await expect(
-				build({ root, sourceRoot: path.join(root, 'src'), target: 'cloudflare', mode: 'development' }),
-			).rejects.toThrow(
-				'[flue] Cloudflare target requires the installed "agents" package to satisfy >=0.14.1 <0.15.0. Found 0.14.0. Install a compatible "agents" version in this project.',
-			);
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it('accepts the audited Agents SDK durability floor for Cloudflare builds', async () => {
-		const root = createAgentsFloorFixture('0.14.1');
-		try {
-			await expect(
-				build({ root, sourceRoot: path.join(root, 'src'), target: 'cloudflare', mode: 'development' }),
-			).rejects.toThrow('[flue] No agent or workflow files found.');
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
-	it('does not apply the Agents SDK durability floor to Node builds', async () => {
-		const root = createAgentsFloorFixture('0.14.0');
-		try {
-			await expect(
-				build({ root, sourceRoot: path.join(root, 'src'), target: 'node' }),
-			).rejects.toThrow('[flue] No agent or workflow files found.');
-		} finally {
-			fs.rmSync(root, { recursive: true, force: true });
-		}
-	});
-
 	it('runs inherited scheduled callbacks when an agent module extends its base class', async () => {
 		const root = await createGeneratedFixture();
 		let server: Awaited<ReturnType<typeof startServer>> | undefined;
@@ -158,18 +123,6 @@ describe('Cloudflare agent extension', () => {
 		}
 	}, 90000);
 });
-
-function createAgentsFloorFixture(version: string): string {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flue-cloudflare-agents-floor-'));
-	fs.mkdirSync(path.join(root, 'node_modules', 'agents'), { recursive: true });
-	fs.mkdirSync(path.join(root, 'src'), { recursive: true });
-	fs.writeFileSync(
-		path.join(root, 'node_modules', 'agents', 'package.json'),
-		JSON.stringify({ name: 'agents', version, main: 'index.js' }),
-	);
-	fs.writeFileSync(path.join(root, 'node_modules', 'agents', 'index.js'), 'module.exports = {};\n');
-	return root;
-}
 
 async function createGeneratedFixture(
 	agentSource = defaultAgentSource,

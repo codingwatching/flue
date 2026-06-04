@@ -65,13 +65,11 @@ describe('package entrypoints', () => {
 
 		expect(cloudflare).toMatchObject({
 			cfSandboxToSessionEnv: expect.any(Function),
-			connectCloudflareAgentWebSocket: expect.any(Function),
 			connectCloudflareWorkflowWebSocket: expect.any(Function),
 			createCloudflareRunRegistry: expect.any(Function),
 			extend: expect.any(Function),
 			FlueRegistry: expect.any(Function),
 			getCloudflareAIBindingApiProvider: expect.any(Function),
-			messageCloudflareAgentWebSocket: expect.any(Function),
 			messageCloudflareWorkflowWebSocket: expect.any(Function),
 			runWithCloudflareContext: expect.any(Function),
 		});

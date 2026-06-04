@@ -9,14 +9,12 @@ import {
 	createAgentSubmissionTerminalHandler,
 	type DirectAgentSubmissionInput,
 } from '../runtime/agent-submissions.ts';
-import type { DispatchInput } from '../runtime/dispatch-queue.ts';
-import { type AgentHandler, handleAgentRequest, validateAgentDispatchAdmission } from '../runtime/handle-agent.ts';
+import { type AgentHandler, assertAgentDispatchAdmissionInput, handleAgentRequest } from '../runtime/handle-agent.ts';
 import type { AttachedAgentEvent, DirectAgentPayload } from '../types.ts';
 import {
 	createSqlAgentExecutionStore,
 	type SqlAgentExecutionStore,
 	type SqlAgentSubmission,
-	SqlAgentSubmissionConflictError,
 	type SqlAgentSubmissionStore,
 	type SubmissionAttemptRef,
 } from './agent-execution-store.ts';
@@ -602,7 +600,7 @@ class CloudflareAgentCoordinator {
 		try {
 			const agent = this.options.createdAgents[this.agentName];
 			if (!agent) throw new Error('[flue] Agent target unavailable during durable processing.');
-			if (input.kind === 'dispatch') await validateAgentDispatchAdmission({ input });
+			if (input.kind === 'dispatch') assertAgentDispatchAdmissionInput(input);
 			const request =
 				input.kind === 'direct'
 					? new Request(
@@ -690,10 +688,7 @@ class CloudflareAgentCoordinator {
 
 	private async admitDispatch(request: Request): Promise<Response> {
 		const input: unknown = await request.json();
-		await validateAgentDispatchAdmission({ input: input as DispatchInput });
-		if (!isDispatchInput(input)) {
-			throw new Error('[flue] Internal dispatch admission received an invalid payload.');
-		}
+		assertAgentDispatchAdmissionInput(input);
 		if (input.agent !== this.agentName || input.id !== this.instance.name) {
 			return new Response('Invalid internal dispatch target.', { status: 400 });
 		}
@@ -702,22 +697,18 @@ class CloudflareAgentCoordinator {
 		}
 		this.cleanupTerminalState();
 		await this.armSubmissionWake();
-		try {
-			const admission = this.submissions.admitDispatch(input);
-			if (admission.kind === 'retained_receipt') {
-				return Response.json({
-					dispatchId: admission.receipt.submissionId,
-					acceptedAt: new Date(admission.receipt.acceptedAt).toISOString(),
-				});
-			}
-			await this.reconcileSubmissions({ driverAlreadyArmed: true });
-			return Response.json({ dispatchId: admission.submission.submissionId, acceptedAt: input.acceptedAt });
-		} catch (error) {
-			if (error instanceof SqlAgentSubmissionConflictError) {
-				return new Response('Conflicting internal dispatch replay.', { status: 409 });
-			}
-			throw error;
+		const admission = this.submissions.admitDispatch(input);
+		if (admission.kind === 'retained_receipt') {
+			return Response.json({
+				dispatchId: admission.receipt.submissionId,
+				acceptedAt: new Date(admission.receipt.acceptedAt).toISOString(),
+			});
 		}
+		if (admission.kind === 'conflict') {
+			return new Response('Conflicting internal dispatch replay.', { status: 409 });
+		}
+		await this.reconcileSubmissions({ driverAlreadyArmed: true });
+		return Response.json({ dispatchId: admission.submission.submissionId, acceptedAt: input.acceptedAt });
 	}
 
 	private acceptSocket(request: Request): Response {
@@ -738,18 +729,6 @@ function isAttemptMarkerSnapshot(value: unknown): value is { submissionId: strin
 	if (!value || typeof value !== 'object') return false;
 	const snapshot = value as Record<string, unknown>;
 	return typeof snapshot.submissionId === 'string' && typeof snapshot.attemptId === 'string';
-}
-
-function isDispatchInput(value: unknown): value is DispatchInput {
-	if (!value || typeof value !== 'object') return false;
-	const input = value as Partial<DispatchInput>;
-	return (
-		typeof input.dispatchId === 'string' &&
-		typeof input.agent === 'string' &&
-		typeof input.id === 'string' &&
-		typeof input.session === 'string' &&
-		typeof input.acceptedAt === 'string'
-	);
 }
 
 function submissionAttemptRef(submission: SqlAgentSubmission): SubmissionAttemptRef | undefined {
