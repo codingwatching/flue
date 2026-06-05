@@ -69,16 +69,12 @@ export interface AgentTurnJournal {
 	readonly attemptId: string;
 	readonly operationId: string;
 	readonly turnId: string;
-	readonly recoveryRootId: string;
 	readonly phase: AgentTurnJournalPhase;
 	readonly revision: number;
 	readonly createdAt: number;
 	readonly updatedAt: number;
-	readonly lastProgressAt: number;
 	readonly checkpointLeafId?: string;
-	readonly streamHighWater?: string;
 	readonly toolRequest?: unknown;
-	readonly toolState?: unknown;
 	readonly committed: boolean;
 	readonly committedLeafId?: string;
 }
@@ -90,12 +86,9 @@ export interface CreateTurnJournalInput {
 	readonly attemptId: string;
 	readonly operationId: string;
 	readonly turnId: string;
-	readonly recoveryRootId: string;
 	readonly phase: AgentTurnJournalPhase;
 	readonly checkpointLeafId?: string;
-	readonly streamHighWater?: string;
 	readonly toolRequest?: unknown;
-	readonly toolState?: unknown;
 }
 
 // ─── Submission store ───────────────────────────────────────────────────────
@@ -115,14 +108,11 @@ export interface AgentSubmissionStore {
 		phase: AgentTurnJournalPhase,
 		options?: {
 			checkpointLeafId?: string;
-			streamHighWater?: string;
 			toolRequest?: unknown;
-			toolState?: unknown;
 		},
 	): boolean;
 	commitTurnJournal(attempt: SubmissionAttemptRef, committedLeafId: string): boolean;
 	replaceTurnJournalAttempt(attempt: SubmissionAttemptRef, nextAttemptId: string): AgentSubmission | null;
-	cleanupCommittedTurnJournals(committedBefore: number, limit?: number): number;
 
 	// Admission
 	admitDispatch(input: DispatchInput): AgentDispatchAdmission;
@@ -138,9 +128,8 @@ export interface AgentSubmissionStore {
 	failSubmission(attempt: SubmissionAttemptRef, error: unknown): boolean;
 	finishSubmissionInterruptionRecording(attempt: SubmissionAttemptRef, error: unknown): boolean;
 
-	// Cleanup / deletion
+	// Deletion
 	deleteSession(sessionKey: string, deleteSessionTree: () => Promise<void>): Promise<void>;
-	cleanupTerminalSubmissions(completedBefore: number, limit?: number): number;
 }
 
 // ─── Execution store ────────────────────────────────────────────────────────

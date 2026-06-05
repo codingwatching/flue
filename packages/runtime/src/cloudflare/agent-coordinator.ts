@@ -6,14 +6,15 @@ import type {
 } from '../agent-execution-store.ts';
 import type { FlueContextInternal } from '../client.ts';
 import {
-	agentSubmissionContextPayload,
 	agentSubmissionDispatchId,
-	agentSubmissionInspectionContextPayload,
+	agentSubmissionProcessingPayload,
+	agentSubmissionReadPayload,
 	createAgentSubmissionHandler,
 	createAgentSubmissionInspectionHandler,
 	createAgentSubmissionObserverRegistry,
 	createAgentSubmissionRepairHandler,
 	createAgentSubmissionTerminalHandler,
+	createSubmissionJournalCallbacks,
 	type AgentSubmissionToolRequest,
 	type DirectAgentSubmissionInput,
 } from '../runtime/agent-submissions.ts';
@@ -31,7 +32,6 @@ export const CLOUDFLARE_AGENT_INTERNAL_DISPATCH_PATH = '/__flue/internal/dispatc
 const FLUE_AGENT_SUBMISSION_WAKE_CALLBACK = '__flueWakeAgentSubmissions';
 const FLUE_AGENT_SUBMISSION_WAKE_SECONDS = 30;
 const FLUE_AGENT_SUBMISSION_ATTEMPT_STALE_MS = 15 * 60 * 1000;
-const FLUE_AGENT_SUBMISSION_TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const FLUE_AGENT_SUBMISSION_ATTEMPT_FIBER = 'flue:submission-attempt';
 
 interface SqlResult {
@@ -340,13 +340,6 @@ class CloudflareAgentCoordinator {
 		);
 	}
 
-	private cleanupTerminalState(): number {
-		const settledBefore = Date.now() - FLUE_AGENT_SUBMISSION_TERMINAL_RETENTION_MS;
-		const submissions = this.submissions.cleanupTerminalSubmissions(settledBefore);
-		this.submissions.cleanupCommittedTurnJournals(settledBefore);
-		return submissions;
-	}
-
 	private async restoreSubmissionWake(): Promise<boolean> {
 		if (!this.submissions.hasUnsettledSubmissions()) return false;
 		await this.armSubmissionWake();
@@ -354,7 +347,6 @@ class CloudflareAgentCoordinator {
 	}
 
 	private async reconcileSubmissions(options: { driverAlreadyArmed?: boolean } = {}): Promise<boolean> {
-		this.cleanupTerminalState();
 		if (!this.submissions.hasUnsettledSubmissions()) return false;
 		if (!options.driverAlreadyArmed) await this.restoreSubmissionWake();
 		if (!this.submissions.hasUnsettledSubmissions()) return false;
@@ -447,7 +439,7 @@ class CloudflareAgentCoordinator {
 			method: 'POST',
 		});
 		const ctx = this.createContext(
-			agentSubmissionInspectionContextPayload(input),
+			agentSubmissionReadPayload(input),
 			request,
 			undefined,
 			agentSubmissionDispatchId(input),
@@ -519,7 +511,7 @@ class CloudflareAgentCoordinator {
 			method: 'POST',
 		});
 		const ctx = this.createContext(
-			agentSubmissionInspectionContextPayload(input),
+			agentSubmissionReadPayload(input),
 			request,
 			undefined,
 			agentSubmissionDispatchId(input),
@@ -558,7 +550,7 @@ class CloudflareAgentCoordinator {
 			method: 'POST',
 		});
 		const ctx = this.createContext(
-			agentSubmissionContextPayload(input),
+			agentSubmissionProcessingPayload(input),
 			request,
 			undefined,
 			agentSubmissionDispatchId(input),
@@ -671,7 +663,7 @@ class CloudflareAgentCoordinator {
 							method: 'POST',
 						});
 			ctx = this.createContext(
-				agentSubmissionContextPayload(input),
+				agentSubmissionProcessingPayload(input),
 				request,
 				undefined,
 				agentSubmissionDispatchId(input),
@@ -687,48 +679,10 @@ class CloudflareAgentCoordinator {
 					return this.observers.publish(submission.submissionId, attachedEvent);
 				});
 			}
-			const recoveryRootId = submission.submissionId;
-			let journalTurnId: string | undefined;
 			const result = await this.runWithInstanceContext(() =>
 				createAgentSubmissionHandler(agent, input, {
 					onInputApplied: () => this.markInputApplied(attempt),
-					journal: {
-						beforeProvider: (state) => {
-							if (state.turnId !== journalTurnId) {
-								journalTurnId = state.turnId;
-								this.submissions.beginTurnJournal({
-									submissionId: submission.submissionId,
-									sessionKey: submission.sessionKey,
-									kind: submission.kind,
-									attemptId: attempt.attemptId,
-									operationId: state.operationId,
-									turnId: state.turnId,
-									recoveryRootId,
-									phase: 'before_provider',
-									checkpointLeafId: state.checkpointLeafId,
-								});
-							}
-						},
-						providerStarted: (state) => {
-							this.submissions.updateTurnJournalPhase(attempt, 'provider_started', {
-								checkpointLeafId: state.checkpointLeafId,
-							});
-						},
-						toolRequestRecorded: (state) => {
-							this.submissions.updateTurnJournalPhase(attempt, 'tool_request_recorded', {
-								checkpointLeafId: state.checkpointLeafId,
-								toolRequest: state.toolRequest,
-							});
-						},
-						checkpointReady: (state) => {
-							this.submissions.updateTurnJournalPhase(attempt, 'before_provider', {
-								checkpointLeafId: state.checkpointLeafId,
-							});
-						},
-						committed: (state) => {
-							this.submissions.commitTurnJournal(attempt, state.committedLeafId);
-						},
-					},
+					journal: createSubmissionJournalCallbacks(this.submissions, submission, attempt),
 				})(operationCtx),
 			);
 			const completed = this.submissions.completeSubmission(attempt);
@@ -794,7 +748,6 @@ class CloudflareAgentCoordinator {
 		if (!this.options.createdAgents[this.agentName]) {
 			return new Response('Dispatch target unavailable.', { status: 404 });
 		}
-		this.cleanupTerminalState();
 		await this.armSubmissionWake();
 		const admission = this.submissions.admitDispatch(input);
 		if (admission.kind === 'retained_receipt') {

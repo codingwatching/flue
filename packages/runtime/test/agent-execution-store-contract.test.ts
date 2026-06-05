@@ -322,7 +322,6 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 					attemptId: 'attempt-1',
 					operationId: 'op-1',
 					turnId: 'turn-1',
-					recoveryRootId: 'dispatch-1',
 					phase: 'before_provider',
 				}),
 			).toBe(true);
@@ -354,9 +353,8 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				attemptId: 'attempt-1',
 				operationId: 'op-1',
 				turnId: 'turn-1',
-				recoveryRootId: 'dispatch-1',
-				phase: 'before_provider',
-			});
+					phase: 'before_provider',
+				});
 			store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1');
 			expect(store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1')).toBe(false);
 		});
@@ -372,7 +370,6 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				attemptId: 'attempt-1',
 				operationId: 'op-1',
 				turnId: 'turn-1',
-				recoveryRootId: 'dispatch-1',
 				phase: 'before_provider',
 			});
 			store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1');
@@ -384,7 +381,6 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				attemptId: 'attempt-1',
 				operationId: 'op-2',
 				turnId: 'turn-2',
-				recoveryRootId: 'dispatch-1',
 				phase: 'before_provider',
 			});
 
@@ -407,7 +403,6 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				attemptId: 'attempt-1',
 				operationId: 'op-1',
 				turnId: 'turn-1',
-				recoveryRootId: 'dispatch-1',
 				phase: 'before_provider',
 			});
 
@@ -426,27 +421,6 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 			});
 		});
 
-		it('cleans up committed journals older than the cutoff', () => {
-			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.beginTurnJournal({
-				submissionId: 'dispatch-1',
-				sessionKey: 'agent-session:["agent-1","default","default"]',
-				kind: 'dispatch',
-				attemptId: 'attempt-1',
-				operationId: 'op-1',
-				turnId: 'turn-1',
-				recoveryRootId: 'dispatch-1',
-				phase: 'before_provider',
-			});
-			store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1');
-
-			// Cleanup with a future cutoff should remove it.
-			const cleaned = store.submissions.cleanupCommittedTurnJournals(Date.now() + 60_000);
-			expect(cleaned).toBe(1);
-			expect(store.submissions.getTurnJournal('dispatch-1')).toBeNull();
-		});
 	});
 
 	// ── Session deletion coordination ─────────────────────────────────────
@@ -554,9 +528,9 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 		});
 	});
 
-	// ── Terminal cleanup ──────────────────────────────────────────────────
+	// ── Edge cases ──────────────────────────────────────────────────────
 
-	describe('terminal cleanup', () => {
+	describe('edge cases', () => {
 		it('reports no unsettled submissions initially', () => {
 			const store = create();
 			expect(store.submissions.hasUnsettledSubmissions()).toBe(false);
@@ -572,42 +546,5 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 			expect(store.submissions.getTurnJournal('nonexistent')).toBeNull();
 		});
 
-		it('removes settled submissions when cleanupTerminalSubmissions runs with a future cutoff', () => {
-			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.admitDispatch(dispatchInput({ dispatchId: 'dispatch-2', session: 'other' }));
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.claimSubmission(attempt('dispatch-2', 'attempt-2'));
-			store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.failSubmission(attempt('dispatch-2', 'attempt-2'), new Error('failed'));
-
-			const cleaned = store.submissions.cleanupTerminalSubmissions(Date.now() + 60_000);
-			expect(cleaned).toBe(2);
-			expect(store.submissions.getSubmission('dispatch-1')).toBeNull();
-			expect(store.submissions.getSubmission('dispatch-2')).toBeNull();
-		});
-
-		it('respects bounded batch limits when cleaning terminal submissions', () => {
-			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.admitDispatch(dispatchInput({ dispatchId: 'dispatch-2', session: 'other' }));
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.claimSubmission(attempt('dispatch-2', 'attempt-2'));
-			store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.completeSubmission(attempt('dispatch-2', 'attempt-2'));
-
-			expect(store.submissions.cleanupTerminalSubmissions(Date.now() + 60_000, 1)).toBe(1);
-			expect(store.submissions.cleanupTerminalSubmissions(Date.now() + 60_000, 1)).toBe(1);
-			expect(store.submissions.cleanupTerminalSubmissions(Date.now() + 60_000, 1)).toBe(0);
-		});
-
-		it('does not remove unsettled submissions during cleanup', () => {
-			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-
-			expect(store.submissions.cleanupTerminalSubmissions(Date.now() + 60_000)).toBe(0);
-			expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({ status: 'running' });
-		});
 	});
 });

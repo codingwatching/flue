@@ -117,9 +117,9 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 	getTurnJournal(submissionId: string): AgentTurnJournal | null {
 		const row = this.sql
 			.exec(
-				`SELECT submission_id, session_key, kind, attempt_id, operation_id, turn_id, recovery_root_id,
-				        phase, revision, created_at, updated_at, last_progress_at, checkpoint_leaf_id,
-				        stream_high_water, tool_request_json, tool_state_json, committed, committed_leaf_id
+				`SELECT submission_id, session_key, kind, attempt_id, operation_id, turn_id,
+				        phase, revision, created_at, updated_at, checkpoint_leaf_id,
+				        tool_request_json, committed, committed_leaf_id
 				 FROM flue_agent_turn_journals
 				 WHERE submission_id = ?
 				 LIMIT 1`,
@@ -135,10 +135,10 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 			this.sql
 				.exec(
 					`INSERT INTO flue_agent_turn_journals
-					 (submission_id, session_key, kind, attempt_id, operation_id, turn_id, recovery_root_id,
-					  phase, revision, created_at, updated_at, last_progress_at, checkpoint_leaf_id,
-					  stream_high_water, tool_request_json, tool_state_json, committed, committed_leaf_id)
-						 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
+					 (submission_id, session_key, kind, attempt_id, operation_id, turn_id,
+					  phase, revision, created_at, updated_at, checkpoint_leaf_id,
+					  tool_request_json, committed, committed_leaf_id)
+						 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 0, NULL)
 						 ON CONFLICT(submission_id) DO UPDATE SET
 						  attempt_id = excluded.attempt_id,
 						  operation_id = excluded.operation_id,
@@ -146,30 +146,22 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 						  phase = excluded.phase,
 						  revision = flue_agent_turn_journals.revision + 1,
 						  updated_at = excluded.updated_at,
-						  last_progress_at = excluded.last_progress_at,
 						  checkpoint_leaf_id = excluded.checkpoint_leaf_id,
-						  stream_high_water = excluded.stream_high_water,
 						  tool_request_json = excluded.tool_request_json,
-						  tool_state_json = excluded.tool_state_json,
 						  committed = 0,
 						  committed_leaf_id = NULL
 						 RETURNING submission_id`,
-
 					input.submissionId,
 					input.sessionKey,
 					input.kind,
 					input.attemptId,
 					input.operationId,
 					input.turnId,
-					input.recoveryRootId,
 					input.phase,
 					now,
 					now,
-					now,
 					input.checkpointLeafId ?? null,
-					input.streamHighWater ?? null,
 					input.toolRequest === undefined ? null : JSON.stringify(input.toolRequest),
-					input.toolState === undefined ? null : JSON.stringify(input.toolState),
 				)
 				.toArray().length > 0
 		);
@@ -178,27 +170,22 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 	updateTurnJournalPhase(
 		attempt: SubmissionAttemptRef,
 		phase: AgentTurnJournalPhase,
-		options: { checkpointLeafId?: string; streamHighWater?: string; toolRequest?: unknown; toolState?: unknown } = {},
+		options: { checkpointLeafId?: string; toolRequest?: unknown } = {},
 	): boolean {
 		const now = Date.now();
 		return (
 			this.sql
 				.exec(
 					`UPDATE flue_agent_turn_journals
-					 SET phase = ?, revision = revision + 1, updated_at = ?, last_progress_at = ?,
+					 SET phase = ?, revision = revision + 1, updated_at = ?,
 					     checkpoint_leaf_id = COALESCE(?, checkpoint_leaf_id),
-					     stream_high_water = COALESCE(?, stream_high_water),
-					     tool_request_json = COALESCE(?, tool_request_json),
-					     tool_state_json = COALESCE(?, tool_state_json)
+					     tool_request_json = COALESCE(?, tool_request_json)
 					 WHERE submission_id = ? AND attempt_id = ? AND committed = 0
 					 RETURNING submission_id`,
 					phase,
 					now,
-					now,
 					options.checkpointLeafId ?? null,
-					options.streamHighWater ?? null,
 					options.toolRequest === undefined ? null : JSON.stringify(options.toolRequest),
-					options.toolState === undefined ? null : JSON.stringify(options.toolState),
 					attempt.submissionId,
 					attempt.attemptId,
 				)
@@ -212,11 +199,10 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 			this.sql
 				.exec(
 					`UPDATE flue_agent_turn_journals
-					 SET phase = 'committed', revision = revision + 1, updated_at = ?, last_progress_at = ?,
+					 SET phase = 'committed', revision = revision + 1, updated_at = ?,
 					     committed = 1, committed_leaf_id = ?
 					 WHERE submission_id = ? AND attempt_id = ? AND committed = 0
 					 RETURNING submission_id`,
-					now,
 					now,
 					committedLeafId,
 					attempt.submissionId,
@@ -242,43 +228,14 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		if (!row) return null;
 		this.sql.exec(
 			`UPDATE flue_agent_turn_journals
-			 SET attempt_id = ?, revision = revision + 1, updated_at = ?, last_progress_at = ?
+			 SET attempt_id = ?, revision = revision + 1, updated_at = ?
 			 WHERE submission_id = ? AND attempt_id = ? AND committed = 0`,
 			nextAttemptId,
-			Date.now(),
 			Date.now(),
 			attempt.submissionId,
 			attempt.attemptId,
 		);
 		return parseSubmission(row);
-	}
-
-	cleanupCommittedTurnJournals(committedBefore: number, limit = 100): number {
-		if (!Number.isInteger(limit) || limit <= 0) {
-			throw new Error('[flue] Committed turn journal cleanup limit must be a positive integer.');
-		}
-		const rows = this.sql
-			.exec(
-				`SELECT submission_id
-				 FROM flue_agent_turn_journals
-				 WHERE committed = 1 AND updated_at < ?
-				 ORDER BY updated_at ASC, submission_id ASC
-				 LIMIT ?`,
-				committedBefore,
-				limit,
-			)
-			.toArray();
-		for (const row of rows) {
-			if (typeof row.submission_id !== 'string') {
-				throw new Error('[flue] Persisted committed turn journal row is malformed.');
-			}
-			this.sql.exec(
-				'DELETE FROM flue_agent_turn_journals WHERE submission_id = ? AND committed = 1 AND updated_at < ?',
-				row.submission_id,
-				committedBefore,
-			);
-		}
-		return rows.length;
 	}
 
 	private getDispatchReceipt(submissionId: string): AgentDispatchReceipt | null {
@@ -409,47 +366,6 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		if (this.pendingSessionDeletions.get(sessionKey) === deletion) {
 			this.pendingSessionDeletions.delete(sessionKey);
 		}
-	}
-
-	cleanupTerminalSubmissions(settledBefore: number, limit = 100): number {
-		if (!Number.isInteger(limit) || limit <= 0) {
-			throw new Error('[flue] Terminal submission cleanup limit must be a positive integer.');
-		}
-		const rows = this.sql
-			.exec(
-				`SELECT sequence
-				 FROM flue_agent_submissions
-				 WHERE status = 'settled' AND settled_at < ?
-				 ORDER BY settled_at ASC, sequence ASC
-				 LIMIT ?`,
-				settledBefore,
-				limit,
-			)
-			.toArray();
-		for (const row of rows) {
-			if (typeof row.sequence !== 'number') {
-				throw new Error('[flue] Persisted terminal submission row is malformed.');
-			}
-			this.sql.exec(
-				`DELETE FROM flue_agent_submissions
-				 WHERE sequence = ? AND status = 'settled' AND settled_at < ?`,
-				row.sequence,
-				settledBefore,
-			);
-		}
-		this.sql.exec(
-			`DELETE FROM flue_agent_dispatch_receipts
-			 WHERE dispatch_id IN (
-			   SELECT dispatch_id
-			   FROM flue_agent_dispatch_receipts
-			   WHERE settled_at < ?
-			   ORDER BY settled_at ASC, dispatch_id ASC
-			   LIMIT ?
-			 )`,
-			settledBefore,
-			limit,
-		);
-		return rows.length;
 	}
 
 	claimSubmission(attempt: SubmissionAttemptRef): AgentSubmission | null {
@@ -658,7 +574,6 @@ function parseTurnJournal(row: SqlRow): AgentTurnJournal {
 		typeof row.attempt_id !== 'string' ||
 		typeof row.operation_id !== 'string' ||
 		typeof row.turn_id !== 'string' ||
-		typeof row.recovery_root_id !== 'string' ||
 		(row.phase !== 'before_provider' &&
 			row.phase !== 'provider_started' &&
 			row.phase !== 'tool_request_recorded' &&
@@ -666,9 +581,7 @@ function parseTurnJournal(row: SqlRow): AgentTurnJournal {
 		typeof row.revision !== 'number' ||
 		typeof row.created_at !== 'number' ||
 		typeof row.updated_at !== 'number' ||
-		typeof row.last_progress_at !== 'number' ||
 		(row.checkpoint_leaf_id !== null && row.checkpoint_leaf_id !== undefined && typeof row.checkpoint_leaf_id !== 'string') ||
-		(row.stream_high_water !== null && row.stream_high_water !== undefined && typeof row.stream_high_water !== 'string') ||
 		(row.committed !== 0 && row.committed !== 1) ||
 		(row.committed_leaf_id !== null && row.committed_leaf_id !== undefined && typeof row.committed_leaf_id !== 'string')
 	) {
@@ -681,16 +594,12 @@ function parseTurnJournal(row: SqlRow): AgentTurnJournal {
 		attemptId: row.attempt_id,
 		operationId: row.operation_id,
 		turnId: row.turn_id,
-		recoveryRootId: row.recovery_root_id,
 		phase: row.phase,
 		revision: row.revision,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
-		lastProgressAt: row.last_progress_at,
 		...(typeof row.checkpoint_leaf_id === 'string' ? { checkpointLeafId: row.checkpoint_leaf_id } : {}),
-		...(typeof row.stream_high_water === 'string' ? { streamHighWater: row.stream_high_water } : {}),
 		...(typeof row.tool_request_json === 'string' ? { toolRequest: JSON.parse(row.tool_request_json) as unknown } : {}),
-		...(typeof row.tool_state_json === 'string' ? { toolState: JSON.parse(row.tool_state_json) as unknown } : {}),
 		committed: row.committed === 1,
 		...(typeof row.committed_leaf_id === 'string' ? { committedLeafId: row.committed_leaf_id } : {}),
 	};
@@ -815,25 +724,18 @@ function ensureTurnJournalTable(sql: SqlStorage): void {
 		 attempt_id TEXT NOT NULL,
 		 operation_id TEXT NOT NULL,
 		 turn_id TEXT NOT NULL,
-		 recovery_root_id TEXT NOT NULL,
 		 phase TEXT NOT NULL,
 		 revision INTEGER NOT NULL,
 		 created_at INTEGER NOT NULL,
 		 updated_at INTEGER NOT NULL,
-		 last_progress_at INTEGER NOT NULL,
 		 checkpoint_leaf_id TEXT,
-		 stream_high_water TEXT,
 		 tool_request_json TEXT,
-		 tool_state_json TEXT,
 		 committed INTEGER NOT NULL DEFAULT 0,
 		 committed_leaf_id TEXT
 		)`,
 	);
 	sql.exec(
 		'CREATE INDEX IF NOT EXISTS flue_agent_turn_journals_session_updated_idx ON flue_agent_turn_journals (session_key, updated_at ASC)',
-	);
-	sql.exec(
-		'CREATE INDEX IF NOT EXISTS flue_agent_turn_journals_committed_updated_idx ON flue_agent_turn_journals (committed, updated_at ASC)',
 	);
 }
 
@@ -873,8 +775,5 @@ function ensureSubmissionTable(sql: SqlStorage): void {
 	);
 	sql.exec(
 		'CREATE INDEX IF NOT EXISTS flue_agent_submissions_session_status_sequence_idx ON flue_agent_submissions (session_key, status, sequence ASC)',
-	);
-	sql.exec(
-		'CREATE INDEX IF NOT EXISTS flue_agent_dispatch_receipts_settled_at_dispatch_id_idx ON flue_agent_dispatch_receipts (settled_at ASC, dispatch_id ASC)',
 	);
 }

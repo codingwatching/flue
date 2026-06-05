@@ -20,7 +20,7 @@ import type {
 } from '../types.ts';
 import type { AgentSubmissionStore, SubmissionAttemptRef } from '../agent-execution-store.ts';
 import type { AttachedAgentSubmissionAdmission } from './agent-submissions.ts';
-import { createAgentSubmissionHandler, createDispatchAgentSubmissionInput } from './agent-submissions.ts';
+import { createAgentSubmissionHandler, createDispatchAgentSubmissionInput, createSubmissionJournalCallbacks } from './agent-submissions.ts';
 import type { DispatchInput, DispatchProcessor } from './dispatch-queue.ts';
 import { streamActiveRunEvents } from './handle-run-routes.ts';
 import { generateWorkflowRunId } from './ids.ts';
@@ -77,49 +77,12 @@ export function createAgentDispatchProcessor(options: {
 					};
 					const claimed = submissions.claimSubmission(attempt);
 					if (!claimed) return;
-					let journalTurnId: string | undefined;
 					try {
 						await createAgentSubmissionHandler(agent, submissionInput, {
 							onInputApplied: () => {
 								submissions.markSubmissionInputApplied(attempt);
 							},
-							journal: {
-								beforeProvider: (state) => {
-									if (state.turnId !== journalTurnId) {
-										journalTurnId = state.turnId;
-										submissions.beginTurnJournal({
-											submissionId: submission.submissionId,
-											sessionKey: submission.sessionKey,
-											kind: submission.kind,
-											attemptId: attempt.attemptId,
-											operationId: state.operationId,
-											turnId: state.turnId,
-											recoveryRootId: submission.submissionId,
-											phase: 'before_provider',
-											checkpointLeafId: state.checkpointLeafId,
-										});
-									}
-								},
-								providerStarted: (state) => {
-									submissions.updateTurnJournalPhase(attempt, 'provider_started', {
-										checkpointLeafId: state.checkpointLeafId,
-									});
-								},
-								toolRequestRecorded: (state) => {
-									submissions.updateTurnJournalPhase(attempt, 'tool_request_recorded', {
-										checkpointLeafId: state.checkpointLeafId,
-										toolRequest: state.toolRequest,
-									});
-								},
-								checkpointReady: (state) => {
-									submissions.updateTurnJournalPhase(attempt, 'before_provider', {
-										checkpointLeafId: state.checkpointLeafId,
-									});
-								},
-								committed: (state) => {
-									submissions.commitTurnJournal(attempt, state.committedLeafId);
-								},
-							},
+							journal: createSubmissionJournalCallbacks(submissions, submission, attempt),
 						})(ctx);
 						submissions.completeSubmission(attempt);
 					} catch (error) {

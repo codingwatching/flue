@@ -154,11 +154,13 @@ export function createAgentSubmissionTerminalHandler(
 	};
 }
 
-export function agentSubmissionContextPayload(input: AgentSubmissionInput): unknown {
+/** Payload for processing and terminal contexts: the user's direct payload or the dispatch input. */
+export function agentSubmissionProcessingPayload(input: AgentSubmissionInput): unknown {
 	return input.kind === 'dispatch' ? agentSubmissionDispatchInput(input) : input.payload;
 }
 
-export function agentSubmissionInspectionContextPayload(input: AgentSubmissionInput): unknown {
+/** Payload for read-only contexts (inspection, repair): the full submission envelope. */
+export function agentSubmissionReadPayload(input: AgentSubmissionInput): unknown {
 	return input.kind === 'dispatch' ? agentSubmissionDispatchInput(input) : input;
 }
 
@@ -208,6 +210,58 @@ export function createAgentSubmissionObserverRegistry(): AgentSubmissionObserver
 		fail(submissionId, error) {
 			observers.get(submissionId)?.reject(error);
 			observers.delete(submissionId);
+		},
+	};
+}
+
+/**
+ * Build the journal callback object for a submission attempt. Both the
+ * Cloudflare coordinator and the Node dispatch processor use the same
+ * journal phase lifecycle; this factory eliminates the duplication.
+ */
+export function createSubmissionJournalCallbacks(
+	submissions: Pick<
+		import('../agent-execution-store.ts').AgentSubmissionStore,
+		'beginTurnJournal' | 'updateTurnJournalPhase' | 'commitTurnJournal'
+	>,
+	submission: { submissionId: string; sessionKey: string; kind: 'dispatch' | 'direct' },
+	attempt: import('../agent-execution-store.ts').SubmissionAttemptRef,
+): NonNullable<ProcessAgentSubmissionOptions['journal']> {
+	let journalTurnId: string | undefined;
+	return {
+		beforeProvider: (state) => {
+			if (state.turnId !== journalTurnId) {
+				journalTurnId = state.turnId;
+				submissions.beginTurnJournal({
+					submissionId: submission.submissionId,
+					sessionKey: submission.sessionKey,
+					kind: submission.kind,
+					attemptId: attempt.attemptId,
+					operationId: state.operationId,
+					turnId: state.turnId,
+					phase: 'before_provider',
+					checkpointLeafId: state.checkpointLeafId,
+				});
+			}
+		},
+		providerStarted: (state) => {
+			submissions.updateTurnJournalPhase(attempt, 'provider_started', {
+				checkpointLeafId: state.checkpointLeafId,
+			});
+		},
+		toolRequestRecorded: (state) => {
+			submissions.updateTurnJournalPhase(attempt, 'tool_request_recorded', {
+				checkpointLeafId: state.checkpointLeafId,
+				toolRequest: state.toolRequest,
+			});
+		},
+		checkpointReady: (state) => {
+			submissions.updateTurnJournalPhase(attempt, 'before_provider', {
+				checkpointLeafId: state.checkpointLeafId,
+			});
+		},
+		committed: (state) => {
+			submissions.commitTurnJournal(attempt, state.committedLeafId);
 		},
 	};
 }
