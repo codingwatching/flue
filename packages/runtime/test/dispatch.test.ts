@@ -8,13 +8,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Type } from '@earendil-works/pi-ai';
 import { createAgent } from '../src/agent-definition.ts';
 import { defineTool } from '../src/tool.ts';
-import { dispatch, observe } from '../src/index.ts';
+import { dispatch } from '../src/index.ts';
 import {
 	configureFlueRuntime,
-	createAgentDispatchProcessor,
 	createFlueContext,
 	type DispatchInput,
-	InMemoryDispatchQueue,
+	type DispatchQueue,
 	InMemorySessionStore,
 	resetFlueRuntimeForTests,
 } from '../src/internal.ts';
@@ -30,10 +29,19 @@ import {
 import { assertAgentDispatchAdmissionInput } from '../src/runtime/handle-agent.ts';
 import { generateSessionAffinityKey } from '../src/runtime/ids.ts';
 import { createSessionStorageKey } from '../src/session-identity.ts';
-import type { AgentConfig, FlueHarness, FlueSession } from '../src/types.ts';
+import type { AgentConfig } from '../src/types.ts';
 import { createNoopSessionEnv } from './fixtures/session-env.ts';
 
 const providers: FauxProviderRegistration[] = [];
+
+/** Minimal no-op dispatch queue stub for tests that only exercise dispatch() validation. */
+function noopDispatchQueue(): DispatchQueue {
+	return {
+		async enqueue(input) {
+			return { dispatchId: input.dispatchId, acceptedAt: input.acceptedAt };
+		},
+	};
+}
 
 afterEach(() => {
 	resetFlueRuntimeForTests();
@@ -65,41 +73,23 @@ describe('dispatch()', () => {
 		).rejects.toThrow('dispatch() called before runtime was configured');
 	});
 
-	it('returns an admission receipt before model processing completes when a named agent dispatch is accepted', async () => {
-		let releaseProcessing: (() => void) | undefined;
-		const processingPending = new Promise<void>((resolve) => {
-			releaseProcessing = resolve;
-		});
-		let processingCompleted = false;
+	it('returns an admission receipt when a named agent dispatch is accepted', async () => {
 		configureFlueRuntime({
 			target: 'node',
-			dispatchQueue: new InMemoryDispatchQueue({
-				async process() {
-					await processingPending;
-					processingCompleted = true;
-				},
-			}),
+			dispatchQueue: noopDispatchQueue(),
 			manifest: { agents: [{ name: 'moderator', transports: {}, created: true }] },
 		});
 
-		try {
-			const receipt = await dispatch({
-				agent: 'moderator',
-				id: 'guild:admission',
-				session: 'case:admission',
-				input: { type: 'flagged', reportId: 'report:admission' },
-			});
+		const receipt = await dispatch({
+			agent: 'moderator',
+			id: 'guild:admission',
+			session: 'case:admission',
+			input: { type: 'flagged', reportId: 'report:admission' },
+		});
 
-			expect(receipt).toEqual({
-				dispatchId: expect.any(String),
-				acceptedAt: expect.any(String),
-			});
-			expect(processingCompleted).toBe(false);
-		} finally {
-			releaseProcessing?.();
-		}
-		await vi.waitFor(() => {
-			expect(processingCompleted).toBe(true);
+		expect(receipt).toEqual({
+			dispatchId: expect.any(String),
+			acceptedAt: expect.any(String),
 		});
 	});
 
@@ -138,7 +128,7 @@ describe('dispatch()', () => {
 		const localModerator = createAgent(() => ({ model: false }));
 		configureFlueRuntime({
 			target: 'node',
-			dispatchQueue: new InMemoryDispatchQueue(),
+			dispatchQueue: noopDispatchQueue(),
 			resolveDispatchAgentName: () => undefined,
 			manifest: { agents: [{ name: 'moderator', transports: {}, created: true }] },
 		});
@@ -206,7 +196,7 @@ describe('dispatch()', () => {
 	it('rejects missing input when dispatch() receives an undefined payload', async () => {
 		configureFlueRuntime({
 			target: 'node',
-			dispatchQueue: new InMemoryDispatchQueue(),
+			dispatchQueue: noopDispatchQueue(),
 			manifest: { agents: [{ name: 'moderator', transports: {}, created: true }] },
 		});
 
@@ -218,7 +208,7 @@ describe('dispatch()', () => {
 	it('rejects non-JSON-like input when dispatch() receives a function value', async () => {
 		configureFlueRuntime({
 			target: 'node',
-			dispatchQueue: new InMemoryDispatchQueue(),
+			dispatchQueue: noopDispatchQueue(),
 			manifest: { agents: [{ name: 'moderator', transports: {}, created: true }] },
 		});
 
@@ -234,7 +224,7 @@ describe('dispatch()', () => {
 	it('rejects non-JSON-like input when dispatch() receives a bigint value', async () => {
 		configureFlueRuntime({
 			target: 'node',
-			dispatchQueue: new InMemoryDispatchQueue(),
+			dispatchQueue: noopDispatchQueue(),
 			manifest: { agents: [{ name: 'moderator', transports: {}, created: true }] },
 		});
 
@@ -250,7 +240,7 @@ describe('dispatch()', () => {
 	it('rejects non-JSON-like input when dispatch() receives a non-plain object', async () => {
 		configureFlueRuntime({
 			target: 'node',
-			dispatchQueue: new InMemoryDispatchQueue(),
+			dispatchQueue: noopDispatchQueue(),
 			manifest: { agents: [{ name: 'moderator', transports: {}, created: true }] },
 		});
 
@@ -266,7 +256,7 @@ describe('dispatch()', () => {
 	it('rejects an unknown agent when dispatch() targets an unregistered name', async () => {
 		configureFlueRuntime({
 			target: 'node',
-			dispatchQueue: new InMemoryDispatchQueue(),
+			dispatchQueue: noopDispatchQueue(),
 			manifest: { agents: [{ name: 'moderator', transports: {}, created: true }] },
 		});
 
@@ -278,7 +268,7 @@ describe('dispatch()', () => {
 	it('rejects a blank agent instance id when dispatch() receives an id', async () => {
 		configureFlueRuntime({
 			target: 'node',
-			dispatchQueue: new InMemoryDispatchQueue(),
+			dispatchQueue: noopDispatchQueue(),
 			manifest: { agents: [{ name: 'moderator', transports: {}, created: true }] },
 		});
 
@@ -290,7 +280,7 @@ describe('dispatch()', () => {
 	it('rejects a blank session name when dispatch() receives a session', async () => {
 		configureFlueRuntime({
 			target: 'node',
-			dispatchQueue: new InMemoryDispatchQueue(),
+			dispatchQueue: noopDispatchQueue(),
 			manifest: { agents: [{ name: 'moderator', transports: {}, created: true }] },
 		});
 
@@ -302,7 +292,7 @@ describe('dispatch()', () => {
 	it('rejects a reserved task session name when dispatch() receives a session', async () => {
 		configureFlueRuntime({
 			target: 'node',
-			dispatchQueue: new InMemoryDispatchQueue(),
+			dispatchQueue: noopDispatchQueue(),
 			manifest: { agents: [{ name: 'moderator', transports: {}, created: true }] },
 		});
 
@@ -342,200 +332,6 @@ describe('dispatch()', () => {
 });
 
 describe('dispatched session processing', () => {
-	it('preserves admission order when the default Node queue processes multiple inputs for one agent instance session', async () => {
-		let releaseFirst: (() => void) | undefined;
-		const firstPending = new Promise<void>((resolve) => {
-			releaseFirst = resolve;
-		});
-		const processingOrder: string[] = [];
-		const queue = new InMemoryDispatchQueue({
-			async process(input) {
-				processingOrder.push(input.dispatchId);
-				if (input.dispatchId === 'dispatch:queue:first') await firstPending;
-			},
-		});
-
-		try {
-			await queue.enqueue({
-				dispatchId: 'dispatch:queue:first',
-				agent: 'moderator',
-				id: 'guild:queue',
-				session: 'case:queue',
-				input: { type: 'flagged', reportId: 'report:queue:first' },
-				acceptedAt: '2026-06-01T00:00:00.000Z',
-			});
-			await queue.enqueue({
-				dispatchId: 'dispatch:queue:second',
-				agent: 'moderator',
-				id: 'guild:queue',
-				session: 'case:queue',
-				input: { type: 'flagged', reportId: 'report:queue:second' },
-				acceptedAt: '2026-06-01T00:00:01.000Z',
-			});
-			await vi.waitFor(() => {
-				expect(processingOrder).toEqual(['dispatch:queue:first']);
-			});
-		} finally {
-			releaseFirst?.();
-		}
-
-		await vi.waitFor(() => {
-			expect(processingOrder).toEqual(['dispatch:queue:first', 'dispatch:queue:second']);
-		});
-	});
-
-	it('exposes instanceId and dispatchId without runId when observe() receives dispatched agent activity', async () => {
-		const events: unknown[] = [];
-		const stopObserving = observe((event, ctx) => {
-			if (ctx.id === 'guild:observe-dispatch') events.push(event);
-		});
-		const processor = createAgentDispatchProcessor({
-			agents: { moderator: createAgent(() => ({ model: false })) },
-			createContext: (...args) => {
-				const ctx = createTestContext(...args);
-				ctx.initializeCreatedAgent = async () =>
-					({
-						name: 'default',
-						session: async (name?: string) =>
-							({
-								name: name ?? 'default',
-								processSubmissionInput: async () => {
-									ctx.emitEvent({ type: 'idle' });
-								},
-								recordSubmissionTerminal: async () => {},
-							}) as unknown as FlueSession,
-						sessions: {} as never,
-						shell: (() => Promise.resolve({ stdout: '', stderr: '', exitCode: 0 })) as never,
-						fs: {} as never,
-					}) satisfies FlueHarness;
-				return ctx;
-			},
-		});
-
-		try {
-			await processor.process({
-				dispatchId: 'dispatch:observe',
-				agent: 'moderator',
-				id: 'guild:observe-dispatch',
-				session: 'case:observe-dispatch',
-				input: { type: 'flagged', reportId: 'report:observe-dispatch' },
-				acceptedAt: '2026-06-01T00:00:00.000Z',
-			});
-
-			expect(events).toEqual([
-				{
-					type: 'idle',
-					instanceId: 'guild:observe-dispatch',
-					dispatchId: 'dispatch:observe',
-					eventIndex: 0,
-					timestamp: expect.any(String),
-				},
-			]);
-			expect(events[0]).not.toHaveProperty('runId');
-		} finally {
-			stopObserving();
-		}
-	});
-
-	it('avoids creating workflow run history when a dispatched input is processed', async () => {
-		const contextRunIds: Array<string | undefined> = [];
-		const contextDispatchIds: Array<string | undefined> = [];
-		const processor = createAgentDispatchProcessor({
-			agents: { moderator: createAgent(() => ({ model: false })) },
-			createContext: (...args) => {
-				contextRunIds.push(args[1]);
-				contextDispatchIds.push(args[5]);
-				const ctx = createTestContext(...args);
-				ctx.initializeCreatedAgent = async () =>
-					({
-						name: 'default',
-						session: async (name?: string) =>
-							({
-								name: name ?? 'default',
-								processSubmissionInput: async () => {},
-								recordSubmissionTerminal: async () => {},
-							}) as unknown as FlueSession,
-						sessions: {} as never,
-						shell: (() => Promise.resolve({ stdout: '', stderr: '', exitCode: 0 })) as never,
-						fs: {} as never,
-					}) satisfies FlueHarness;
-				return ctx;
-			},
-		});
-
-		await processor.process({
-			dispatchId: 'dispatch:no-run-history',
-			agent: 'moderator',
-			id: 'guild:no-run-history',
-			session: 'case:no-run-history',
-			input: { type: 'flagged', reportId: 'report:no-run-history' },
-			acceptedAt: '2026-06-01T00:00:00.000Z',
-		});
-
-		expect(contextRunIds).toEqual([undefined]);
-		expect(contextDispatchIds).toEqual(['dispatch:no-run-history']);
-	});
-
-	it('avoids repeating model processing when the same dispatch id is retried before the session advances', async () => {
-		const provider = createProvider();
-		let modelProcessingCount = 0;
-		provider.setResponses([
-			() => {
-				modelProcessingCount += 1;
-				return fauxAssistantMessage('processed idempotently');
-			},
-		]);
-		const store = new InMemorySessionStore();
-		const save = vi.spyOn(store, 'save');
-		const processor = createAgentDispatchProcessor({
-			agents: {
-				moderator: createAgent(() => ({
-					model: `${provider.getModel().provider}/${provider.getModel().id}`,
-				})),
-			},
-			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
-				createFlueContext({
-					id,
-					runId,
-					dispatchId,
-					payload,
-					env: {},
-					req,
-					initialEventIndex,
-					agentConfig: {
-						systemPrompt: '',
-						skills: {},
-						subagents: {},
-						model: undefined,
-						resolveModel: () => provider.getModel(),
-					},
-					createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
-					defaultStore: store,
-				}),
-		});
-		const input: DispatchInput = {
-			dispatchId: 'dispatch:retry-idempotent',
-			agent: 'moderator',
-			id: 'guild:retry-idempotent',
-			session: 'case:retry-idempotent',
-			input: { type: 'flagged', reportId: 'report:retry-idempotent' },
-			acceptedAt: '2026-06-01T00:00:00.000Z',
-		};
-
-		await processor.process(input);
-		await processor.process(input);
-
-		const data = save.mock.calls.at(-1)?.[1];
-		expect(modelProcessingCount).toBe(1);
-		expect(
-			data?.entries.filter((entry) => entry.type === 'message' && entry.message.role === 'user'),
-		).toHaveLength(1);
-		expect(data?.entries[0]).toMatchObject({
-			source: 'dispatch',
-			dispatch: { dispatchId: 'dispatch:retry-idempotent' },
-		});
-	});
-
 	it('marks input application after configured persistence and before model processing begins', async () => {
 		const order: string[] = [];
 		const provider = createProvider();
@@ -869,358 +665,6 @@ describe('dispatched session processing', () => {
 
 		await expect(createAgentSubmissionInspectionHandler(agent, createDispatchAgentSubmissionInput(input))(ctx)).resolves.toBe('uncertain');
 		expect(provider.state.callCount).toBe(0);
-	});
-
-	it('continues a persisted transient failure when the same dispatch id is replayed', async () => {
-		vi.useFakeTimers();
-		try {
-			const provider = createProvider();
-			provider.setResponses([fauxAssistantMessage('recovered dispatch')]);
-			const store = new InMemorySessionStore();
-			const processor = createAgentDispatchProcessor({
-				agents: {
-					moderator: createAgent(() => ({
-						model: `${provider.getModel().provider}/${provider.getModel().id}`,
-					})),
-				},
-				createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
-					createFlueContext({
-						id,
-						runId,
-						dispatchId,
-						payload,
-						env: {},
-						req,
-						initialEventIndex,
-						agentConfig: {
-							systemPrompt: '',
-							skills: {},
-							subagents: {},
-							model: undefined,
-							resolveModel: () => provider.getModel(),
-						},
-						createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
-						defaultStore: store,
-					}),
-			});
-			const input: DispatchInput = {
-				dispatchId: 'dispatch:retry-transient',
-				agent: 'moderator',
-				id: 'guild:retry-transient',
-				session: 'case:retry-transient',
-				input: { type: 'flagged', reportId: 'report:retry-transient' },
-				acceptedAt: '2026-06-01T00:00:00.000Z',
-			};
-			const timestamp = '2026-06-01T00:00:00.000Z';
-			await store.save(`agent-session:${JSON.stringify([input.id, 'default', input.session])}`, {
-				version: 5,
-				affinityKey: 'aff_01KT3P3GZGFBCKHKMQ11A7H2HW',
-				entries: [
-					{
-						type: 'message',
-						id: 'dispatch-input',
-						parentId: null,
-						timestamp,
-						message: {
-							role: 'user',
-							content: [{ type: 'text', text: 'persisted dispatch' }],
-							timestamp: 0,
-						},
-						source: 'dispatch',
-						dispatch: input,
-					},
-					{
-						type: 'message',
-						id: 'transient-error',
-						parentId: 'dispatch-input',
-						timestamp,
-						message: fauxAssistantMessage('', {
-							stopReason: 'error',
-							errorMessage: 'overloaded_error',
-						}),
-						source: 'dispatch',
-					},
-				],
-				leafId: 'transient-error',
-				metadata: {},
-				createdAt: timestamp,
-				updatedAt: timestamp,
-			});
-
-			const recovered = processor.process(input);
-			await vi.runAllTimersAsync();
-
-			await expect(recovered).resolves.toBeUndefined();
-			expect(provider.state.callCount).toBe(1);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('rejects a retried dispatch when later user input has already advanced the session', async () => {
-		const provider = createProvider();
-		provider.setResponses([
-			fauxAssistantMessage('processed before advancement'),
-			fauxAssistantMessage('processed later input'),
-		]);
-		const store = new InMemorySessionStore();
-		const processor = createAgentDispatchProcessor({
-			agents: {
-				moderator: createAgent(() => ({
-					model: `${provider.getModel().provider}/${provider.getModel().id}`,
-				})),
-			},
-			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
-				createFlueContext({
-					id,
-					runId,
-					dispatchId,
-					payload,
-					env: {},
-					req,
-					initialEventIndex,
-					agentConfig: {
-						systemPrompt: '',
-						skills: {},
-						subagents: {},
-						model: undefined,
-						resolveModel: () => provider.getModel(),
-					},
-					createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
-					defaultStore: store,
-				}),
-		});
-		const input: DispatchInput = {
-			dispatchId: 'dispatch:retry-advanced',
-			agent: 'moderator',
-			id: 'guild:retry-advanced',
-			session: 'case:retry-advanced',
-			input: { type: 'flagged', reportId: 'report:retry-advanced' },
-			acceptedAt: '2026-06-01T00:00:00.000Z',
-		};
-
-		await processor.process(input);
-		await processor.process({
-			dispatchId: 'dispatch:retry-advanced:later',
-			agent: 'moderator',
-			id: 'guild:retry-advanced',
-			session: 'case:retry-advanced',
-			input: { type: 'flagged', reportId: 'report:retry-advanced:later' },
-			acceptedAt: '2026-06-01T00:00:01.000Z',
-		});
-
-		await expect(processor.process(input)).rejects.toThrow(
-			'Cannot recover dispatched input after the session has advanced',
-		);
-	});
-});
-
-describe('createAgentDispatchProcessor() with submission store', () => {
-	it('processes a dispatch through the full submission lifecycle when a submission store is wired', async () => {
-		const { createNodeAgentExecutionStore } = await import('../src/node/agent-execution-store.ts');
-		const executionStore = createNodeAgentExecutionStore();
-		const provider = createProvider();
-		provider.setResponses([fauxAssistantMessage('Submission-tracked response.')]);
-		const processor = createAgentDispatchProcessor({
-			agents: {
-				moderator: createAgent(() => ({
-					model: `${provider.getModel().provider}/${provider.getModel().id}`,
-				})),
-			},
-			submissions: executionStore.submissions,
-			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
-				createFlueContext({
-					id,
-					runId,
-					dispatchId,
-					payload,
-					env: {},
-					req,
-					initialEventIndex,
-					agentConfig: {
-						systemPrompt: '',
-						skills: {},
-						subagents: {},
-						model: undefined,
-						resolveModel: () => provider.getModel(),
-					},
-					createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
-					defaultStore: executionStore.sessions,
-					submissionStore: executionStore.submissions,
-				}),
-		});
-		const input: DispatchInput = {
-			dispatchId: 'dispatch:submission-store',
-			agent: 'moderator',
-			id: 'guild:submission-store',
-			session: 'case:submission-store',
-			input: { type: 'flagged' },
-			acceptedAt: '2026-06-01T00:00:00.000Z',
-		};
-
-		await processor.process(input);
-
-		const submission = executionStore.submissions.getSubmission('dispatch:submission-store');
-		expect(submission).toMatchObject({ status: 'settled', kind: 'dispatch' });
-		expect(submission?.error).toBeUndefined();
-		expect(executionStore.submissions.hasUnsettledSubmissions()).toBe(false);
-	});
-
-	it('commits the turn journal through a full provider round when a submission store is wired', async () => {
-		const { createNodeAgentExecutionStore } = await import('../src/node/agent-execution-store.ts');
-		const executionStore = createNodeAgentExecutionStore();
-		const provider = createProvider();
-		provider.setResponses([fauxAssistantMessage('Journal-tracked response.')]);
-		const processor = createAgentDispatchProcessor({
-			agents: {
-				moderator: createAgent(() => ({
-					model: `${provider.getModel().provider}/${provider.getModel().id}`,
-				})),
-			},
-			submissions: executionStore.submissions,
-			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
-				createFlueContext({
-					id,
-					runId,
-					dispatchId,
-					payload,
-					env: {},
-					req,
-					initialEventIndex,
-					agentConfig: {
-						systemPrompt: '',
-						skills: {},
-						subagents: {},
-						model: undefined,
-						resolveModel: () => provider.getModel(),
-					},
-					createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
-					defaultStore: executionStore.sessions,
-					submissionStore: executionStore.submissions,
-				}),
-		});
-		const input: DispatchInput = {
-			dispatchId: 'dispatch:journal-track',
-			agent: 'moderator',
-			id: 'guild:journal-track',
-			session: 'case:journal-track',
-			input: { type: 'flagged' },
-			acceptedAt: '2026-06-01T00:00:00.000Z',
-		};
-
-		await processor.process(input);
-
-		const journal = executionStore.submissions.getTurnJournal('dispatch:journal-track');
-		expect(journal).toMatchObject({
-			phase: 'committed',
-			committed: true,
-			committedLeafId: expect.any(String),
-		});
-	});
-
-	it('returns early on idempotent replay when a completed dispatch is reprocessed', async () => {
-		const { createNodeAgentExecutionStore } = await import('../src/node/agent-execution-store.ts');
-		const executionStore = createNodeAgentExecutionStore();
-		const provider = createProvider();
-		provider.setResponses([fauxAssistantMessage('First response.')]);
-		const processor = createAgentDispatchProcessor({
-			agents: {
-				moderator: createAgent(() => ({
-					model: `${provider.getModel().provider}/${provider.getModel().id}`,
-				})),
-			},
-			submissions: executionStore.submissions,
-			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
-				createFlueContext({
-					id,
-					runId,
-					dispatchId,
-					payload,
-					env: {},
-					req,
-					initialEventIndex,
-					agentConfig: {
-						systemPrompt: '',
-						skills: {},
-						subagents: {},
-						model: undefined,
-						resolveModel: () => provider.getModel(),
-					},
-					createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
-					defaultStore: executionStore.sessions,
-					submissionStore: executionStore.submissions,
-				}),
-		});
-		const input: DispatchInput = {
-			dispatchId: 'dispatch:idempotent-replay',
-			agent: 'moderator',
-			id: 'guild:idempotent-replay',
-			session: 'case:idempotent-replay',
-			input: { type: 'flagged' },
-			acceptedAt: '2026-06-01T00:00:00.000Z',
-		};
-
-		await processor.process(input);
-		expect(provider.state.callCount).toBe(1);
-
-		// Replay — should return early without invoking the provider again.
-		await processor.process(input);
-		expect(provider.state.callCount).toBe(1);
-	});
-
-	it('settles the submission with an error when the provider fails', async () => {
-		const { createNodeAgentExecutionStore } = await import('../src/node/agent-execution-store.ts');
-		const executionStore = createNodeAgentExecutionStore();
-		const provider = createProvider();
-		provider.setResponses([
-			() => {
-				throw new Error('provider crashed');
-			},
-		]);
-		const processor = createAgentDispatchProcessor({
-			agents: {
-				moderator: createAgent(() => ({
-					model: `${provider.getModel().provider}/${provider.getModel().id}`,
-				})),
-			},
-			submissions: executionStore.submissions,
-			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
-				createFlueContext({
-					id,
-					runId,
-					dispatchId,
-					payload,
-					env: {},
-					req,
-					initialEventIndex,
-					agentConfig: {
-						systemPrompt: '',
-						skills: {},
-						subagents: {},
-						model: undefined,
-						resolveModel: () => provider.getModel(),
-					},
-					createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
-					defaultStore: executionStore.sessions,
-					submissionStore: executionStore.submissions,
-				}),
-		});
-		const input: DispatchInput = {
-			dispatchId: 'dispatch:provider-crash',
-			agent: 'moderator',
-			id: 'guild:provider-crash',
-			session: 'case:provider-crash',
-			input: { type: 'flagged' },
-			acceptedAt: '2026-06-01T00:00:00.000Z',
-		};
-
-		await expect(processor.process(input)).rejects.toThrow('provider crashed');
-
-		const submission = executionStore.submissions.getSubmission('dispatch:provider-crash');
-		expect(submission).toMatchObject({
-			status: 'settled',
-			error: expect.stringContaining('provider crashed'),
-		});
 	});
 });
 
@@ -1593,14 +1037,15 @@ describe('repairInterruptedToolCalls()', () => {
 			input: { type: 'flagged' },
 			acceptedAt: '2026-06-01T00:00:00.000Z',
 		};
-		const processor = createAgentDispatchProcessor({
+		const { createNodeAgentCoordinator } = await import('../src/node/agent-coordinator.ts');
+		const coordinator = createNodeAgentCoordinator({
+			submissions: executionStore.submissions,
 			agents: {
 				moderator: createAgent(() => ({
 					model: `${provider.getModel().provider}/${provider.getModel().id}`,
 					tools: [lookup],
 				})),
 			},
-			submissions: executionStore.submissions,
 			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
 				createFlueContext({
 					id, runId, dispatchId, payload, env: {}, req, initialEventIndex,
@@ -1616,7 +1061,7 @@ describe('repairInterruptedToolCalls()', () => {
 			return originalUpdate(attempt, phase, options);
 		};
 
-		await processor.process(dispatchInput);
+		await coordinator.admitDispatch(dispatchInput);
 
 		const toolRequestIndex = events.findIndex(
 			(event) => event.type === 'phase' && event.phase === 'tool_request_recorded',
@@ -1659,14 +1104,15 @@ describe('repairInterruptedToolCalls()', () => {
 			input: { type: 'flagged' },
 			acceptedAt: '2026-06-01T00:00:00.000Z',
 		};
-		const processor = createAgentDispatchProcessor({
+		const { createNodeAgentCoordinator } = await import('../src/node/agent-coordinator.ts');
+		const coordinator = createNodeAgentCoordinator({
+			submissions: executionStore.submissions,
 			agents: {
 				moderator: createAgent(() => ({
 					model: `${provider.getModel().provider}/${provider.getModel().id}`,
 					tools: [lookup],
 				})),
 			},
-			submissions: executionStore.submissions,
 			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
 				createFlueContext({
 					id, runId, dispatchId, payload, env: {}, req, initialEventIndex,
@@ -1683,7 +1129,7 @@ describe('repairInterruptedToolCalls()', () => {
 			return originalUpdate(attempt, phase, options);
 		};
 
-		await processor.process(dispatchInput);
+		await coordinator.admitDispatch(dispatchInput);
 
 		expect(phases).toContain('provider_started');
 		expect(phases).toContain('tool_request_recorded');
@@ -1692,28 +1138,6 @@ describe('repairInterruptedToolCalls()', () => {
 		expect(journal?.committed).toBe(true);
 	});
 });
-
-function createTestContext(
-	id: string,
-	runId: string | undefined,
-	payload: unknown,
-	req: Request,
-	initialEventIndex?: number,
-	dispatchId?: string,
-) {
-	return createFlueContext({
-		id,
-		runId,
-		dispatchId,
-		payload,
-		env: {},
-		req,
-		initialEventIndex,
-		agentConfig: testAgentConfig(),
-		createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
-		defaultStore: new InMemorySessionStore(),
-	});
-}
 
 function testAgentConfig(): AgentConfig {
 	return {

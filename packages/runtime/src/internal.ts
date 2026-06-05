@@ -28,8 +28,7 @@ export { createNodeAgentCoordinator, createNodeDispatchQueue } from './node/agen
 export { createNodeAgentExecutionStore } from './node/agent-execution-store.ts';
 export { InMemoryRunRegistry } from './node/run-registry.ts';
 export { InMemoryRunStore } from './node/run-store.ts';
-export type { DispatchInput, DispatchProcessor, DispatchQueue } from './runtime/dispatch-queue.ts';
-export { InMemoryDispatchQueue } from './runtime/dispatch-queue.ts';
+export type { DispatchInput, DispatchQueue } from './runtime/dispatch-queue.ts';
 export type { ExposedTransport, FlueRuntime } from './runtime/flue-app.ts';
 export {
 	configureFlueRuntime,
@@ -67,7 +66,6 @@ export type {
 //
 // The user-facing `flue()` itself is re-exported from `@flue/runtime/routing`, not here.
 export {
-	createAgentDispatchProcessor,
 	createDirectAgentHandler,
 	failRecoveredRun,
 	handleWorkflowRequest,

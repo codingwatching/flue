@@ -18,10 +18,8 @@ import type {
 	FlueEvent,
 	FlueEventCallback,
 } from '../types.ts';
-import type { AgentSubmissionStore, SubmissionAttemptRef } from '../agent-execution-store.ts';
 import type { AttachedAgentSubmissionAdmission } from './agent-submissions.ts';
-import { createAgentSubmissionHandler, createDispatchAgentSubmissionInput, createSubmissionJournalCallbacks } from './agent-submissions.ts';
-import type { DispatchInput, DispatchProcessor } from './dispatch-queue.ts';
+import type { DispatchInput } from './dispatch-queue.ts';
 import { streamActiveRunEvents } from './handle-run-routes.ts';
 import { generateWorkflowRunId } from './ids.ts';
 import type { RunOwner, RunRegistry } from './run-registry.ts';
@@ -37,69 +35,6 @@ interface DirectRequestSession {
 	processDirectInput(input: { message: string }): PromiseLike<unknown>;
 }
 
-interface AgentSessionTarget {
-	agentName: string;
-	instanceId: string;
-}
-
-export function createAgentDispatchProcessor(options: {
-	agents: Record<string, CreatedAgentHandler>;
-	createContext: CreateContextFn;
-	submissions?: AgentSubmissionStore;
-}): DispatchProcessor {
-	return {
-		async process(input) {
-			const agent = options.agents[input.agent];
-			if (!agent)
-				throw new Error(`[flue] dispatch target agent "${input.agent}" has no created agent.`);
-			const releaseSessionLock = await reserveDispatchAgentSession(
-				{ agentName: input.agent, instanceId: input.id },
-				input,
-			);
-			try {
-				const ctx = options.createContext(
-					input.id,
-					undefined,
-					input,
-					dispatchRequest(),
-					undefined,
-					input.dispatchId,
-				);
-				const submissionInput = createDispatchAgentSubmissionInput(input);
-				const submissions = options.submissions;
-				if (submissions) {
-					const admission = submissions.admitDispatch(input);
-					if (admission.kind !== 'submission') return;
-					const submission = admission.submission;
-					const attempt: SubmissionAttemptRef = {
-						submissionId: submission.submissionId,
-						attemptId: crypto.randomUUID(),
-					};
-					const claimed = submissions.claimSubmission(attempt);
-					if (!claimed) return;
-					try {
-						await createAgentSubmissionHandler(agent, submissionInput, {
-							onInputApplied: () => {
-								submissions.markSubmissionInputApplied(attempt);
-							},
-							timeoutAt: claimed.timeoutAt > 0 ? claimed.timeoutAt : undefined,
-							journal: createSubmissionJournalCallbacks(submissions, submission, attempt),
-						})(ctx);
-						submissions.completeSubmission(attempt);
-					} catch (error) {
-						submissions.failSubmission(attempt, error);
-						throw error;
-					}
-				} else {
-					await createAgentSubmissionHandler(agent, submissionInput)(ctx);
-				}
-			} finally {
-				releaseSessionLock();
-			}
-		},
-	};
-}
-
 export function assertAgentDispatchAdmissionInput(input: unknown): asserts input is DispatchInput {
 	if (!isDispatchInput(input))
 		throw new Error('[flue] Internal dispatch admission received an invalid payload.');
@@ -108,13 +43,6 @@ export function assertAgentDispatchAdmissionInput(input: unknown): asserts input
 			'[flue] Internal dispatch admission session names beginning with "task:" are reserved for delegated tasks.',
 		);
 	}
-}
-
-async function reserveDispatchAgentSession(
-	target: AgentSessionTarget,
-	payload: unknown,
-): Promise<() => void> {
-	return waitForAgentSessionLock(target, payload);
 }
 
 function isDispatchInput(value: unknown): value is DispatchInput {
@@ -133,10 +61,6 @@ function isDispatchInput(value: unknown): value is DispatchInput {
 		typeof input.acceptedAt === 'string' &&
 		input.acceptedAt.trim() !== ''
 	);
-}
-
-function dispatchRequest(): Request {
-	return new Request('http://flue.local/_dispatch', { method: 'POST' });
 }
 
 export function createDirectAgentHandler(agent: CreatedAgentHandler): AgentHandler {
@@ -379,26 +303,6 @@ export interface FailRecoveredRunOptions {
 }
 
 const activeAttachedAgentSessions = new Map<string, symbol>();
-
-async function waitForAgentSessionLock(
-	target: AgentSessionTarget,
-	payload: unknown,
-): Promise<() => void> {
-	while (true) {
-		try {
-			return (
-				acquireDirectAgentSessionLock(target.agentName, target.instanceId, payload) ?? (() => {})
-			);
-		} catch (error) {
-			if (
-				!(error instanceof InvalidRequestError) ||
-				error.details !== 'This agent session already has an active prompt.'
-			)
-				throw error;
-			await new Promise<void>((resolve) => setTimeout(resolve, 0));
-		}
-	}
-}
 
 interface WorkflowAdmissionOptions {
 	owner: RunOwner;
