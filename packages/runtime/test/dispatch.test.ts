@@ -1009,6 +1009,215 @@ describe('dispatched session processing', () => {
 	});
 });
 
+describe('createAgentDispatchProcessor() with submission store', () => {
+	it('processes a dispatch through the full submission lifecycle when a submission store is wired', async () => {
+		const { createNodeAgentExecutionStore } = await import('../src/node/agent-execution-store.ts');
+		const executionStore = createNodeAgentExecutionStore();
+		const provider = createProvider();
+		provider.setResponses([fauxAssistantMessage('Submission-tracked response.')]);
+		const processor = createAgentDispatchProcessor({
+			agents: {
+				moderator: createAgent(() => ({
+					model: `${provider.getModel().provider}/${provider.getModel().id}`,
+				})),
+			},
+			submissions: executionStore.submissions,
+			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
+				createFlueContext({
+					id,
+					runId,
+					dispatchId,
+					payload,
+					env: {},
+					req,
+					initialEventIndex,
+					agentConfig: {
+						systemPrompt: '',
+						skills: {},
+						subagents: {},
+						model: undefined,
+						resolveModel: () => provider.getModel(),
+					},
+					createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
+					defaultStore: executionStore.sessions,
+					submissionStore: executionStore.submissions,
+				}),
+		});
+		const input: DispatchInput = {
+			dispatchId: 'dispatch:submission-store',
+			agent: 'moderator',
+			id: 'guild:submission-store',
+			session: 'case:submission-store',
+			input: { type: 'flagged' },
+			acceptedAt: '2026-06-01T00:00:00.000Z',
+		};
+
+		await processor.process(input);
+
+		const submission = executionStore.submissions.getSubmission('dispatch:submission-store');
+		expect(submission).toMatchObject({ status: 'settled', kind: 'dispatch' });
+		expect(submission?.error).toBeUndefined();
+		expect(executionStore.submissions.hasUnsettledSubmissions()).toBe(false);
+	});
+
+	it('commits the turn journal through a full provider round when a submission store is wired', async () => {
+		const { createNodeAgentExecutionStore } = await import('../src/node/agent-execution-store.ts');
+		const executionStore = createNodeAgentExecutionStore();
+		const provider = createProvider();
+		provider.setResponses([fauxAssistantMessage('Journal-tracked response.')]);
+		const processor = createAgentDispatchProcessor({
+			agents: {
+				moderator: createAgent(() => ({
+					model: `${provider.getModel().provider}/${provider.getModel().id}`,
+				})),
+			},
+			submissions: executionStore.submissions,
+			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
+				createFlueContext({
+					id,
+					runId,
+					dispatchId,
+					payload,
+					env: {},
+					req,
+					initialEventIndex,
+					agentConfig: {
+						systemPrompt: '',
+						skills: {},
+						subagents: {},
+						model: undefined,
+						resolveModel: () => provider.getModel(),
+					},
+					createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
+					defaultStore: executionStore.sessions,
+					submissionStore: executionStore.submissions,
+				}),
+		});
+		const input: DispatchInput = {
+			dispatchId: 'dispatch:journal-track',
+			agent: 'moderator',
+			id: 'guild:journal-track',
+			session: 'case:journal-track',
+			input: { type: 'flagged' },
+			acceptedAt: '2026-06-01T00:00:00.000Z',
+		};
+
+		await processor.process(input);
+
+		const journal = executionStore.submissions.getTurnJournal('dispatch:journal-track');
+		expect(journal).toMatchObject({
+			phase: 'committed',
+			committed: true,
+			committedLeafId: expect.any(String),
+		});
+	});
+
+	it('returns early on idempotent replay when a completed dispatch is reprocessed', async () => {
+		const { createNodeAgentExecutionStore } = await import('../src/node/agent-execution-store.ts');
+		const executionStore = createNodeAgentExecutionStore();
+		const provider = createProvider();
+		provider.setResponses([fauxAssistantMessage('First response.')]);
+		const processor = createAgentDispatchProcessor({
+			agents: {
+				moderator: createAgent(() => ({
+					model: `${provider.getModel().provider}/${provider.getModel().id}`,
+				})),
+			},
+			submissions: executionStore.submissions,
+			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
+				createFlueContext({
+					id,
+					runId,
+					dispatchId,
+					payload,
+					env: {},
+					req,
+					initialEventIndex,
+					agentConfig: {
+						systemPrompt: '',
+						skills: {},
+						subagents: {},
+						model: undefined,
+						resolveModel: () => provider.getModel(),
+					},
+					createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
+					defaultStore: executionStore.sessions,
+					submissionStore: executionStore.submissions,
+				}),
+		});
+		const input: DispatchInput = {
+			dispatchId: 'dispatch:idempotent-replay',
+			agent: 'moderator',
+			id: 'guild:idempotent-replay',
+			session: 'case:idempotent-replay',
+			input: { type: 'flagged' },
+			acceptedAt: '2026-06-01T00:00:00.000Z',
+		};
+
+		await processor.process(input);
+		expect(provider.state.callCount).toBe(1);
+
+		// Replay — should return early without invoking the provider again.
+		await processor.process(input);
+		expect(provider.state.callCount).toBe(1);
+	});
+
+	it('settles the submission with an error when the provider fails', async () => {
+		const { createNodeAgentExecutionStore } = await import('../src/node/agent-execution-store.ts');
+		const executionStore = createNodeAgentExecutionStore();
+		const provider = createProvider();
+		provider.setResponses([
+			() => {
+				throw new Error('provider crashed');
+			},
+		]);
+		const processor = createAgentDispatchProcessor({
+			agents: {
+				moderator: createAgent(() => ({
+					model: `${provider.getModel().provider}/${provider.getModel().id}`,
+				})),
+			},
+			submissions: executionStore.submissions,
+			createContext: (id, runId, payload, req, initialEventIndex, dispatchId) =>
+				createFlueContext({
+					id,
+					runId,
+					dispatchId,
+					payload,
+					env: {},
+					req,
+					initialEventIndex,
+					agentConfig: {
+						systemPrompt: '',
+						skills: {},
+						subagents: {},
+						model: undefined,
+						resolveModel: () => provider.getModel(),
+					},
+					createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
+					defaultStore: executionStore.sessions,
+					submissionStore: executionStore.submissions,
+				}),
+		});
+		const input: DispatchInput = {
+			dispatchId: 'dispatch:provider-crash',
+			agent: 'moderator',
+			id: 'guild:provider-crash',
+			session: 'case:provider-crash',
+			input: { type: 'flagged' },
+			acceptedAt: '2026-06-01T00:00:00.000Z',
+		};
+
+		await expect(processor.process(input)).rejects.toThrow('provider crashed');
+
+		const submission = executionStore.submissions.getSubmission('dispatch:provider-crash');
+		expect(submission).toMatchObject({
+			status: 'settled',
+			error: expect.stringContaining('provider crashed'),
+		});
+	});
+});
+
 function createTestContext(
 	id: string,
 	runId: string | undefined,
