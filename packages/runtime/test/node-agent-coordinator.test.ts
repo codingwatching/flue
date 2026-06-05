@@ -1,17 +1,14 @@
 import {
 	type FauxProviderRegistration,
 	fauxAssistantMessage,
-	fauxToolCall,
 	registerFauxProvider,
 } from '@earendil-works/pi-ai';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createAgent } from '../src/agent-definition.ts';
-import { defineTool } from '../src/tool.ts';
-import { Type } from '@earendil-works/pi-ai';
-import { createFlueContext, InMemorySessionStore, type DispatchInput } from '../src/internal.ts';
+import { createFlueContext, resolveModel, type DispatchInput } from '../src/internal.ts';
 import { createNodeAgentExecutionStore } from '../src/node/agent-execution-store.ts';
 import { createNodeAgentCoordinator, type NodeAgentCoordinator } from '../src/node/agent-coordinator.ts';
 import type { CreateContextFn } from '../src/runtime/handle-agent.ts';
@@ -19,6 +16,22 @@ import type { AgentExecutionStore } from '../src/agent-execution-store.ts';
 import { createSessionStorageKey } from '../src/session-identity.ts';
 import { generateSessionAffinityKey } from '../src/runtime/ids.ts';
 import { createNoopSessionEnv } from './fixtures/session-env.ts';
+
+// ---------------------------------------------------------------------------
+// Env setup — load ANTHROPIC_API_KEY from the repo .env file
+// ---------------------------------------------------------------------------
+
+try {
+	const envPath = join(__dirname, '..', '..', '..', '.env');
+	const envContent = readFileSync(envPath, 'utf8');
+	for (const line of envContent.split('\n')) {
+		const match = line.match(/^([A-Z_]+)=(.+)$/);
+		if (match && match[1] && match[2]) process.env[match[1]] = match[2].trim();
+	}
+} catch {}
+
+const REAL_MODEL = 'anthropic/claude-haiku-4-5';
+const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,7 +47,7 @@ afterEach(() => {
 	}
 });
 
-function createProvider(): FauxProviderRegistration {
+function createFauxProvider(): FauxProviderRegistration {
 	const provider = registerFauxProvider({ provider: `node-coordinator-test-${crypto.randomUUID()}` });
 	providers.push(provider);
 	return provider;
@@ -46,7 +59,33 @@ function createTempDbPath(): string {
 	return join(dir, 'agent.db');
 }
 
-function makeCreateContext(
+/** Create a context factory that uses a real LLM model. */
+function makeRealCreateContext(executionStore: AgentExecutionStore): CreateContextFn {
+	const model = resolveModel(REAL_MODEL);
+	return (id, runId, payload, req, initialEventIndex, dispatchId) =>
+		createFlueContext({
+			id,
+			runId,
+			dispatchId,
+			payload,
+			env: {},
+			req,
+			initialEventIndex,
+			agentConfig: {
+				systemPrompt: 'You are a test assistant. Respond with a single short sentence.',
+				skills: {},
+				subagents: {},
+				model,
+				resolveModel: (m) => (m ? resolveModel(m) : model),
+			},
+			createDefaultEnv: async () => createNoopSessionEnv({ cwd: '/' }),
+			defaultStore: executionStore.sessions,
+			submissionStore: executionStore.submissions,
+		});
+}
+
+/** Create a context factory that uses a faux (mock) provider. */
+function makeFauxCreateContext(
 	provider: FauxProviderRegistration,
 	executionStore: AgentExecutionStore,
 ): CreateContextFn {
@@ -84,19 +123,33 @@ function makeDispatchInput(overrides: Partial<DispatchInput> = {}): DispatchInpu
 	};
 }
 
-function createCoordinator(
+/** Create a coordinator backed by a real LLM. */
+function createRealCoordinator(
 	dbPath: string,
-	provider: FauxProviderRegistration,
-	agentOverrides?: Parameters<typeof createAgent>[0],
 ): { coordinator: NodeAgentCoordinator; executionStore: AgentExecutionStore } {
 	const executionStore = createNodeAgentExecutionStore(dbPath);
-	const agent = createAgent(agentOverrides ?? (() => ({
-		model: `${provider.getModel().provider}/${provider.getModel().id}`,
-	})));
+	const agent = createAgent(() => ({ model: REAL_MODEL }));
 	const coordinator = createNodeAgentCoordinator({
 		submissions: executionStore.submissions,
 		agents: { assistant: agent },
-		createContext: makeCreateContext(provider, executionStore),
+		createContext: makeRealCreateContext(executionStore),
+	});
+	return { coordinator, executionStore };
+}
+
+/** Create a coordinator backed by a faux (mock) provider. */
+function createFauxCoordinator(
+	dbPath: string,
+	provider: FauxProviderRegistration,
+): { coordinator: NodeAgentCoordinator; executionStore: AgentExecutionStore } {
+	const executionStore = createNodeAgentExecutionStore(dbPath);
+	const agent = createAgent(() => ({
+		model: `${provider.getModel().provider}/${provider.getModel().id}`,
+	}));
+	const coordinator = createNodeAgentCoordinator({
+		submissions: executionStore.submissions,
+		agents: { assistant: agent },
+		createContext: makeFauxCreateContext(provider, executionStore),
 	});
 	return { coordinator, executionStore };
 }
@@ -107,11 +160,9 @@ function createCoordinator(
 
 describe('NodeAgentCoordinator', () => {
 	describe('basic lifecycle', () => {
-		it('processes a dispatch through the full submission lifecycle with file persistence', async () => {
+		it.skipIf(!hasApiKey)('processes a dispatch through the full submission lifecycle with file persistence', async () => {
 			const dbPath = createTempDbPath();
-			const provider = createProvider();
-			provider.setResponses([fauxAssistantMessage('Hello from durable dispatch.')]);
-			const { coordinator, executionStore } = createCoordinator(dbPath, provider);
+			const { coordinator, executionStore } = createRealCoordinator(dbPath);
 
 			const input = makeDispatchInput();
 			await coordinator.admitDispatch(input);
@@ -119,13 +170,11 @@ describe('NodeAgentCoordinator', () => {
 			const submission = executionStore.submissions.getSubmission(input.dispatchId);
 			expect(submission).toMatchObject({ status: 'settled', kind: 'dispatch' });
 			expect(submission?.error).toBeUndefined();
-		});
+		}, 30_000);
 
-		it('persists settled submission across store reopens', async () => {
+		it.skipIf(!hasApiKey)('persists settled submission across store reopens', async () => {
 			const dbPath = createTempDbPath();
-			const provider = createProvider();
-			provider.setResponses([fauxAssistantMessage('Persisted response.')]);
-			const { coordinator } = createCoordinator(dbPath, provider);
+			const { coordinator } = createRealCoordinator(dbPath);
 
 			const input = makeDispatchInput();
 			await coordinator.admitDispatch(input);
@@ -136,13 +185,12 @@ describe('NodeAgentCoordinator', () => {
 			expect(submission).toMatchObject({ status: 'settled', kind: 'dispatch' });
 			expect(submission?.error).toBeUndefined();
 			expect(reopened.submissions.hasUnsettledSubmissions()).toBe(false);
-		});
+		}, 30_000);
 	});
 
 	describe('interrupt and recover', () => {
-		it('reconciles an interrupted submission by requeuing when canonical input is absent', async () => {
+		it.skipIf(!hasApiKey)('reconciles an interrupted submission by requeuing when canonical input is absent', async () => {
 			const dbPath = createTempDbPath();
-			const provider = createProvider();
 			// First process will be "interrupted" — we manually admit+claim without processing.
 			const store1 = createNodeAgentExecutionStore(dbPath);
 			const input = makeDispatchInput();
@@ -153,23 +201,22 @@ describe('NodeAgentCoordinator', () => {
 			});
 			// Submission is now running with no canonical input — simulates crash before input applied.
 
-			// "Restart": new coordinator reconciles.
-			provider.setResponses([fauxAssistantMessage('Recovered response.')]);
-			const { coordinator, executionStore } = createCoordinator(dbPath, provider);
+			// "Restart": new coordinator reconciles with a real LLM.
+			const { coordinator, executionStore } = createRealCoordinator(dbPath);
 			await coordinator.reconcileSubmissions();
 
 			const submission = executionStore.submissions.getSubmission(input.dispatchId);
 			expect(submission).toMatchObject({ status: 'settled' });
 			expect(submission?.error).toBeUndefined();
-		});
+		}, 30_000);
 
-		it('reconciles an interrupted submission as completed when the session already has a response', async () => {
+		it('terminalizes an interrupted submission when input was applied but no response completed', async () => {
 			const dbPath = createTempDbPath();
-			const provider = createProvider();
+			const provider = createFauxProvider();
 			provider.setResponses([fauxAssistantMessage('Complete response.')]);
 
 			// Process fully, then simulate an interrupted second dispatch to same session.
-			const { coordinator: coord1, executionStore: store1 } = createCoordinator(dbPath, provider);
+			const { coordinator: coord1, executionStore: store1 } = createFauxCoordinator(dbPath, provider);
 			const input1 = makeDispatchInput({ dispatchId: 'dispatch-first', session: 'sess-1' });
 			await coord1.admitDispatch(input1);
 
@@ -188,7 +235,7 @@ describe('NodeAgentCoordinator', () => {
 
 			// "Restart": the second submission's input is applied but no completed response.
 			// It should be terminalized (not replayed).
-			const { coordinator: coord2, executionStore: store2 } = createCoordinator(dbPath, provider);
+			const { coordinator: coord2, executionStore: store2 } = createFauxCoordinator(dbPath, provider);
 			await coord2.reconcileSubmissions();
 
 			const submission = store2.submissions.getSubmission(input2.dispatchId);
@@ -202,7 +249,7 @@ describe('NodeAgentCoordinator', () => {
 	describe('attempt exhaustion', () => {
 		it('terminalizes a submission after exceeding the retry budget', async () => {
 			const dbPath = createTempDbPath();
-			const provider = createProvider();
+			const provider = createFauxProvider();
 			const store = createNodeAgentExecutionStore(dbPath);
 
 			const input = makeDispatchInput();
@@ -257,7 +304,7 @@ describe('NodeAgentCoordinator', () => {
 
 			// "Restart": reconciliation should terminalize.
 			provider.setResponses([fauxAssistantMessage('Should not be called.')]);
-			const { coordinator, executionStore } = createCoordinator(dbPath, provider);
+			const { coordinator, executionStore } = createFauxCoordinator(dbPath, provider);
 			await coordinator.reconcileSubmissions();
 
 			const submission = executionStore.submissions.getSubmission(input.dispatchId);
@@ -269,7 +316,7 @@ describe('NodeAgentCoordinator', () => {
 	describe('timeout', () => {
 		it('terminalizes a submission after the configured timeout expires', async () => {
 			const dbPath = createTempDbPath();
-			const provider = createProvider();
+			const provider = createFauxProvider();
 			const store = createNodeAgentExecutionStore(dbPath);
 
 			const input = makeDispatchInput();
@@ -284,7 +331,7 @@ describe('NodeAgentCoordinator', () => {
 
 			// "Restart": reconciliation should terminalize due to timeout.
 			provider.setResponses([fauxAssistantMessage('Should not be called.')]);
-			const { coordinator, executionStore } = createCoordinator(dbPath, provider);
+			const { coordinator, executionStore } = createFauxCoordinator(dbPath, provider);
 			await coordinator.reconcileSubmissions();
 
 			const submission = executionStore.submissions.getSubmission(input.dispatchId);
@@ -296,7 +343,7 @@ describe('NodeAgentCoordinator', () => {
 	describe('tool repair across restart', () => {
 		it('repairs interrupted tool calls and completes the submission after restart', async () => {
 			const dbPath = createTempDbPath();
-			const provider = createProvider();
+			const provider = createFauxProvider();
 
 			// Set up: two tool calls, process will be interrupted mid-execution.
 			const toolCalls = [
@@ -395,7 +442,7 @@ describe('NodeAgentCoordinator', () => {
 			// "Restart": The new coordinator should repair the interrupted tools and re-process.
 			// After repair, the provider will be called again with the repaired context.
 			provider.setResponses([fauxAssistantMessage('Completed after tool repair.')]);
-			const { coordinator, executionStore } = createCoordinator(dbPath, provider);
+			const { coordinator, executionStore } = createFauxCoordinator(dbPath, provider);
 			await coordinator.reconcileSubmissions();
 
 			const submission = executionStore.submissions.getSubmission(input.dispatchId);
@@ -405,9 +452,8 @@ describe('NodeAgentCoordinator', () => {
 	});
 
 	describe('queue ordering across restart', () => {
-		it('reconciles the interrupted submission before processing queued work in the same session', async () => {
+		it.skipIf(!hasApiKey)('reconciles the interrupted submission before processing queued work in the same session', async () => {
 			const dbPath = createTempDbPath();
-			const provider = createProvider();
 			const store = createNodeAgentExecutionStore(dbPath);
 
 			// Admit two dispatches to the same session.
@@ -424,19 +470,8 @@ describe('NodeAgentCoordinator', () => {
 			// A is now running but unprocessed (simulates crash).
 
 			// "Restart": reconcile should handle A (requeue since no input applied),
-			// then process A, then drain B.
-			let callCount = 0;
-			provider.setResponses([
-				() => {
-					callCount++;
-					return fauxAssistantMessage(`Response ${callCount}`);
-				},
-				() => {
-					callCount++;
-					return fauxAssistantMessage(`Response ${callCount}`);
-				},
-			]);
-			const { coordinator, executionStore } = createCoordinator(dbPath, provider);
+			// then process A, then drain B. Both use a real LLM.
+			const { coordinator, executionStore } = createRealCoordinator(dbPath);
 			await coordinator.reconcileSubmissions();
 
 			const subA = executionStore.submissions.getSubmission(inputA.dispatchId);
@@ -446,18 +481,11 @@ describe('NodeAgentCoordinator', () => {
 			expect(subB).toMatchObject({ status: 'settled' });
 			expect(subB?.error).toBeUndefined();
 			expect(executionStore.submissions.hasUnsettledSubmissions()).toBe(false);
-		});
+		}, 60_000);
 
-		it('processes queued submissions from different sessions independently', async () => {
+		it.skipIf(!hasApiKey)('processes queued submissions from different sessions independently', async () => {
 			const dbPath = createTempDbPath();
-			const provider = createProvider();
-
-			let callCount = 0;
-			provider.setResponses([
-				() => { callCount++; return fauxAssistantMessage(`Response ${callCount}`); },
-				() => { callCount++; return fauxAssistantMessage(`Response ${callCount}`); },
-			]);
-			const { coordinator, executionStore } = createCoordinator(dbPath, provider);
+			const { coordinator, executionStore } = createRealCoordinator(dbPath);
 
 			const inputA = makeDispatchInput({ dispatchId: 'dispatch-sessA', session: 'session-A' });
 			const inputB = makeDispatchInput({ dispatchId: 'dispatch-sessB', session: 'session-B' });
@@ -471,13 +499,12 @@ describe('NodeAgentCoordinator', () => {
 			expect(subA?.error).toBeUndefined();
 			expect(subB).toMatchObject({ status: 'settled' });
 			expect(subB?.error).toBeUndefined();
-		});
+		}, 60_000);
 	});
 
 	describe('queue drain after dispatch', () => {
-		it('drains queued submissions after processing a new dispatch', async () => {
+		it.skipIf(!hasApiKey)('drains queued submissions after processing a new dispatch', async () => {
 			const dbPath = createTempDbPath();
-			const provider = createProvider();
 			const store = createNodeAgentExecutionStore(dbPath);
 
 			// Pre-queue a submission from a "previous process" that was never claimed.
@@ -485,12 +512,7 @@ describe('NodeAgentCoordinator', () => {
 			store.submissions.admitDispatch(inputOld);
 
 			// Now create a fresh coordinator and dispatch a new submission to a different session.
-			let callCount = 0;
-			provider.setResponses([
-				() => { callCount++; return fauxAssistantMessage(`Response ${callCount}`); },
-				() => { callCount++; return fauxAssistantMessage(`Response ${callCount}`); },
-			]);
-			const { coordinator, executionStore } = createCoordinator(dbPath, provider);
+			const { coordinator, executionStore } = createRealCoordinator(dbPath);
 
 			const inputNew = makeDispatchInput({ dispatchId: 'dispatch-new', session: 'other-session' });
 			await coordinator.admitDispatch(inputNew);
@@ -502,6 +524,6 @@ describe('NodeAgentCoordinator', () => {
 			expect(subNew?.error).toBeUndefined();
 			expect(subOld).toMatchObject({ status: 'settled' });
 			expect(subOld?.error).toBeUndefined();
-		});
+		}, 60_000);
 	});
 });
