@@ -105,14 +105,14 @@ export interface CreateTurnJournalInput {
 
 export interface AgentSubmissionStore {
 	// Query
-	getSubmission(submissionId: string): AgentSubmission | null;
-	getTurnJournal(submissionId: string): AgentTurnJournal | null;
-	hasUnsettledSubmissions(): boolean;
-	listRunnableSubmissions(): AgentSubmission[];
-	listRunningSubmissions(): AgentSubmission[];
+	getSubmission(submissionId: string): Promise<AgentSubmission | null>;
+	getTurnJournal(submissionId: string): Promise<AgentTurnJournal | null>;
+	hasUnsettledSubmissions(): Promise<boolean>;
+	listRunnableSubmissions(): Promise<AgentSubmission[]>;
+	listRunningSubmissions(): Promise<AgentSubmission[]>;
 
 	// Turn journal lifecycle
-	beginTurnJournal(input: CreateTurnJournalInput): boolean;
+	beginTurnJournal(input: CreateTurnJournalInput): Promise<boolean>;
 	updateTurnJournalPhase(
 		attempt: SubmissionAttemptRef,
 		phase: AgentTurnJournalPhase,
@@ -120,21 +120,21 @@ export interface AgentSubmissionStore {
 			checkpointLeafId?: string;
 			toolRequest?: unknown;
 		},
-	): boolean;
-	commitTurnJournal(attempt: SubmissionAttemptRef, committedLeafId: string): boolean;
-	replaceTurnJournalAttempt(attempt: SubmissionAttemptRef, nextAttemptId: string): AgentSubmission | null;
+	): Promise<boolean>;
+	commitTurnJournal(attempt: SubmissionAttemptRef, committedLeafId: string): Promise<boolean>;
+	replaceTurnJournalAttempt(attempt: SubmissionAttemptRef, nextAttemptId: string): Promise<AgentSubmission | null>;
 
 	// Admission
-	admitDispatch(input: DispatchInput): AgentDispatchAdmission;
-	admitDirect(input: DirectAgentSubmissionInput): AgentSubmission;
+	admitDispatch(input: DispatchInput): Promise<AgentDispatchAdmission>;
+	admitDirect(input: DirectAgentSubmissionInput): Promise<AgentSubmission>;
 
 	// Submission lifecycle
-	claimSubmission(attempt: SubmissionAttemptRef, durability?: { maxRetry: number; timeoutAt: number }): AgentSubmission | null;
-	markSubmissionInputApplied(attempt: SubmissionAttemptRef): boolean;
-	requestSubmissionRecovery(attempt: SubmissionAttemptRef): boolean;
-	requeueSubmissionBeforeInputApplied(attempt: SubmissionAttemptRef): boolean;
-	completeSubmission(attempt: SubmissionAttemptRef): boolean;
-	failSubmission(attempt: SubmissionAttemptRef, error: unknown): boolean;
+	claimSubmission(attempt: SubmissionAttemptRef, durability?: { maxRetry: number; timeoutAt: number }): Promise<AgentSubmission | null>;
+	markSubmissionInputApplied(attempt: SubmissionAttemptRef): Promise<boolean>;
+	requestSubmissionRecovery(attempt: SubmissionAttemptRef): Promise<boolean>;
+	requeueSubmissionBeforeInputApplied(attempt: SubmissionAttemptRef): Promise<boolean>;
+	completeSubmission(attempt: SubmissionAttemptRef): Promise<boolean>;
+	failSubmission(attempt: SubmissionAttemptRef, error: unknown): Promise<boolean>;
 
 	// Deletion
 	deleteSession(sessionKey: string, deleteSessionTree: () => Promise<void>): Promise<void>;

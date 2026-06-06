@@ -142,10 +142,10 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 	// ── Dispatch admission ────────────────────────────────────────────────
 
 	describe('dispatch admission', () => {
-		it('admits one queued dispatch row when the same submission is replayed', () => {
+		it('admits one queued dispatch row when the same submission is replayed', async () => {
 			const store = create();
-			const first = store.submissions.admitDispatch(dispatchInput());
-			const replay = store.submissions.admitDispatch(dispatchInput());
+			const first = await store.submissions.admitDispatch(dispatchInput());
+			const replay = await store.submissions.admitDispatch(dispatchInput());
 			expect(replay).toEqual(first);
 			expect(first).toMatchObject({
 				kind: 'submission',
@@ -157,10 +157,10 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 			});
 		});
 
-		it('returns conflict when one dispatch id is reused with another payload', () => {
+		it('returns conflict when one dispatch id is reused with another payload', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			expect(store.submissions.admitDispatch(dispatchInput({ input: { text: 'Different' } }))).toEqual({
+			await store.submissions.admitDispatch(dispatchInput());
+			expect(await store.submissions.admitDispatch(dispatchInput({ input: { text: 'Different' } }))).toEqual({
 				kind: 'conflict',
 			});
 		});
@@ -169,24 +169,24 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 	// ── Submission ordering ───────────────────────────────────────────────
 
 	describe('submission ordering', () => {
-		it('orders direct and dispatched submissions together within one session', () => {
+		it('orders direct and dispatched submissions together within one session', async () => {
 			const store = create();
-			const direct = store.submissions.admitDirect(directInput());
-			store.submissions.admitDispatch(dispatchInput());
-			const other = store.submissions.admitDirect(
+			const direct = await store.submissions.admitDirect(directInput());
+			await store.submissions.admitDispatch(dispatchInput());
+			const other = await store.submissions.admitDirect(
 				directInput({ submissionId: 'direct-2', session: 'other' }),
 			);
-			expect(store.submissions.listRunnableSubmissions()).toEqual([direct, other]);
-			expect(store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-blocked'))).toBeNull();
+			expect(await store.submissions.listRunnableSubmissions()).toEqual([direct, other]);
+			expect(await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-blocked'))).toBeNull();
 		});
 
-		it('lists queued dispatches in admission order and selects one runnable head per session', () => {
+		it('lists queued dispatches in admission order and selects one runnable head per session', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.admitDispatch(dispatchInput({ dispatchId: 'dispatch-2' }));
-			store.submissions.admitDispatch(dispatchInput({ dispatchId: 'dispatch-3', session: 'other' }));
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.admitDispatch(dispatchInput({ dispatchId: 'dispatch-2' }));
+			await store.submissions.admitDispatch(dispatchInput({ dispatchId: 'dispatch-3', session: 'other' }));
 
-			expect(store.submissions.listRunnableSubmissions()).toEqual([
+			expect(await store.submissions.listRunnableSubmissions()).toEqual([
 				expect.objectContaining({ submissionId: 'dispatch-1' }),
 				expect.objectContaining({ submissionId: 'dispatch-3' }),
 			]);
@@ -196,15 +196,15 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 	// ── Claim semantics ──────────────────────────────────────────────────
 
 	describe('claim semantics', () => {
-		it('claims only runnable session heads while allowing separate sessions to claim independently', () => {
+		it('claims only runnable session heads while allowing separate sessions to claim independently', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.admitDispatch(dispatchInput({ dispatchId: 'dispatch-2' }));
-			store.submissions.admitDispatch(dispatchInput({ dispatchId: 'dispatch-3', session: 'other' }));
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.admitDispatch(dispatchInput({ dispatchId: 'dispatch-2' }));
+			await store.submissions.admitDispatch(dispatchInput({ dispatchId: 'dispatch-3', session: 'other' }));
 
-			const first = store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			const blocked = store.submissions.claimSubmission(attempt('dispatch-2', 'attempt-2'));
-			const other = store.submissions.claimSubmission(attempt('dispatch-3', 'attempt-3'));
+			const first = await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			const blocked = await store.submissions.claimSubmission(attempt('dispatch-2', 'attempt-2'));
+			const other = await store.submissions.claimSubmission(attempt('dispatch-3', 'attempt-3'));
 
 			expect(first).toMatchObject({
 				submissionId: 'dispatch-1',
@@ -218,25 +218,25 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				status: 'running',
 				attemptId: 'attempt-3',
 			});
-			expect(store.submissions.listRunningSubmissions()).toEqual([first, other]);
-			expect(store.submissions.listRunnableSubmissions()).toEqual([]);
+			expect(await store.submissions.listRunningSubmissions()).toEqual([first, other]);
+			expect(await store.submissions.listRunnableSubmissions()).toEqual([]);
 		});
 	});
 
 	// ── Lifecycle transitions ─────────────────────────────────────────────
 
 	describe('lifecycle transitions', () => {
-		it('records input application and recovery requests only for the owning attempt', () => {
+		it('records input application and recovery requests only for the owning attempt', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
 
-			expect(store.submissions.markSubmissionInputApplied(attempt('dispatch-1', 'attempt-1'))).toBe(true);
-			expect(store.submissions.markSubmissionInputApplied(attempt('dispatch-1', 'stale-attempt'))).toBe(false);
-			expect(store.submissions.requestSubmissionRecovery(attempt('dispatch-1', 'attempt-1'))).toBe(true);
-			expect(store.submissions.requestSubmissionRecovery(attempt('dispatch-1', 'stale-attempt'))).toBe(false);
+			expect(await store.submissions.markSubmissionInputApplied(attempt('dispatch-1', 'attempt-1'))).toBe(true);
+			expect(await store.submissions.markSubmissionInputApplied(attempt('dispatch-1', 'stale-attempt'))).toBe(false);
+			expect(await store.submissions.requestSubmissionRecovery(attempt('dispatch-1', 'attempt-1'))).toBe(true);
+			expect(await store.submissions.requestSubmissionRecovery(attempt('dispatch-1', 'stale-attempt'))).toBe(false);
 
-			expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({
+			expect(await store.submissions.getSubmission('dispatch-1')).toMatchObject({
 				status: 'running',
 				attemptId: 'attempt-1',
 				inputAppliedAt: expect.any(Number),
@@ -244,42 +244,42 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 			});
 		});
 
-		it('requeues interrupted attempts only before canonical input application', () => {
+		it('requeues interrupted attempts only before canonical input application', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput({ dispatchId: 'requeue-safe' }));
-			store.submissions.admitDispatch(dispatchInput({ dispatchId: 'requeue-unsafe', session: 'other' }));
-			store.submissions.claimSubmission(attempt('requeue-safe', 'attempt-safe'));
-			store.submissions.claimSubmission(attempt('requeue-unsafe', 'attempt-unsafe'));
-			store.submissions.markSubmissionInputApplied(attempt('requeue-unsafe', 'attempt-unsafe'));
+			await store.submissions.admitDispatch(dispatchInput({ dispatchId: 'requeue-safe' }));
+			await store.submissions.admitDispatch(dispatchInput({ dispatchId: 'requeue-unsafe', session: 'other' }));
+			await store.submissions.claimSubmission(attempt('requeue-safe', 'attempt-safe'));
+			await store.submissions.claimSubmission(attempt('requeue-unsafe', 'attempt-unsafe'));
+			await store.submissions.markSubmissionInputApplied(attempt('requeue-unsafe', 'attempt-unsafe'));
 
-			expect(store.submissions.requeueSubmissionBeforeInputApplied(attempt('requeue-safe', 'attempt-safe'))).toBe(true);
-			expect(store.submissions.requeueSubmissionBeforeInputApplied(attempt('requeue-unsafe', 'attempt-unsafe'))).toBe(false);
-			expect(store.submissions.getSubmission('requeue-safe')).toMatchObject({ status: 'queued' });
-			expect(store.submissions.getSubmission('requeue-unsafe')).toMatchObject({ status: 'running' });
+			expect(await store.submissions.requeueSubmissionBeforeInputApplied(attempt('requeue-safe', 'attempt-safe'))).toBe(true);
+			expect(await store.submissions.requeueSubmissionBeforeInputApplied(attempt('requeue-unsafe', 'attempt-unsafe'))).toBe(false);
+			expect(await store.submissions.getSubmission('requeue-safe')).toMatchObject({ status: 'queued' });
+			expect(await store.submissions.getSubmission('requeue-unsafe')).toMatchObject({ status: 'running' });
 		});
 
-		it('reports unsettled visibility until a claimed dispatch completes', () => {
+		it('reports unsettled visibility until a claimed dispatch completes', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			expect(store.submissions.hasUnsettledSubmissions()).toBe(true);
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			expect(store.submissions.listRunningSubmissions()).toHaveLength(1);
-			store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
-			expect(store.submissions.hasUnsettledSubmissions()).toBe(false);
-			expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({ status: 'settled' });
+			await store.submissions.admitDispatch(dispatchInput());
+			expect(await store.submissions.hasUnsettledSubmissions()).toBe(true);
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			expect(await store.submissions.listRunningSubmissions()).toHaveLength(1);
+			await store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
+			expect(await store.submissions.hasUnsettledSubmissions()).toBe(false);
+			expect(await store.submissions.getSubmission('dispatch-1')).toMatchObject({ status: 'settled' });
 		});
 
-		it('ignores stale-attempt settlement and keeps the first owning terminal state', () => {
+		it('ignores stale-attempt settlement and keeps the first owning terminal state', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
 
-			store.submissions.completeSubmission(attempt('dispatch-1', 'stale-attempt'));
-			store.submissions.failSubmission(attempt('dispatch-1', 'attempt-1'), new Error('first failure'));
-			store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.failSubmission(attempt('dispatch-1', 'attempt-1'), new Error('later failure'));
+			await store.submissions.completeSubmission(attempt('dispatch-1', 'stale-attempt'));
+			await store.submissions.failSubmission(attempt('dispatch-1', 'attempt-1'), new Error('first failure'));
+			await store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.failSubmission(attempt('dispatch-1', 'attempt-1'), new Error('later failure'));
 
-			expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({
+			expect(await store.submissions.getSubmission('dispatch-1')).toMatchObject({
 				status: 'settled',
 				error: 'first failure',
 			});
@@ -290,10 +290,10 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 	// ── Durability ───────────────────────────────────────────────────────
 
 	describe('durability', () => {
-		it('initializes attempt_count to 0 and timeout_at to 0 at admission', () => {
+		it('initializes attempt_count to 0 and timeout_at to 0 at admission', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			const submission = store.submissions.getSubmission('dispatch-1');
+			await store.submissions.admitDispatch(dispatchInput());
+			const submission = await store.submissions.getSubmission('dispatch-1');
 			expect(submission).toMatchObject({
 				attemptCount: 0,
 				maxRetry: 10,
@@ -301,39 +301,39 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 			});
 		});
 
-		it('sets attempt_count to 1 and applies system defaults at claim time', () => {
+		it('sets attempt_count to 1 and applies system defaults at claim time', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.admitDispatch(dispatchInput());
 			const before = Date.now();
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			const claimed = store.submissions.getSubmission('dispatch-1')!;
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			const claimed = (await store.submissions.getSubmission('dispatch-1'))!;
 			expect(claimed.attemptCount).toBe(1);
 			expect(claimed.maxRetry).toBe(10);
 			expect(claimed.timeoutAt).toBeGreaterThanOrEqual(before + 60 * 60_000);
 		});
 
-		it('applies custom durability at claim time when provided', () => {
+		it('applies custom durability at claim time when provided', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.admitDispatch(dispatchInput());
 			const customTimeout = Date.now() + 6 * 60 * 60_000;
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'), {
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'), {
 				maxRetry: 5,
 				timeoutAt: customTimeout,
 			});
-			expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({
+			expect(await store.submissions.getSubmission('dispatch-1')).toMatchObject({
 				attemptCount: 1,
 				maxRetry: 5,
 				timeoutAt: customTimeout,
 			});
 		});
 
-		it('increments attempt_count on recovery via replaceTurnJournalAttempt', () => {
+		it('increments attempt_count on recovery via replaceTurnJournalAttempt', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			expect(store.submissions.getSubmission('dispatch-1')).toMatchObject({ attemptCount: 1 });
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			expect(await store.submissions.getSubmission('dispatch-1')).toMatchObject({ attemptCount: 1 });
 
-			store.submissions.beginTurnJournal({
+			await store.submissions.beginTurnJournal({
 				submissionId: 'dispatch-1',
 				sessionKey: 'agent-session:["agent-1","default","default"]',
 				kind: 'dispatch',
@@ -343,7 +343,7 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				phase: 'before_provider',
 			});
 
-			const replaced = store.submissions.replaceTurnJournalAttempt(
+			const replaced = await store.submissions.replaceTurnJournalAttempt(
 				attempt('dispatch-1', 'attempt-1'),
 				'attempt-2',
 			);
@@ -354,13 +354,13 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 	// ── Turn journal lifecycle ────────────────────────────────────────────
 
 	describe('turn journal lifecycle', () => {
-		it('creates, advances, and commits a turn journal through all phases', () => {
+		it('creates, advances, and commits a turn journal through all phases', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
 
 			expect(
-				store.submissions.beginTurnJournal({
+				await store.submissions.beginTurnJournal({
 					submissionId: 'dispatch-1',
 					sessionKey: 'agent-session:["agent-1","default","default"]',
 					kind: 'dispatch',
@@ -370,28 +370,28 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 					phase: 'before_provider',
 				}),
 			).toBe(true);
-			expect(store.submissions.updateTurnJournalPhase(attempt('dispatch-1', 'attempt-1'), 'provider_started')).toBe(true);
-			expect(store.submissions.updateTurnJournalPhase(attempt('dispatch-1', 'attempt-1'), 'tool_request_recorded', {
+			expect(await store.submissions.updateTurnJournalPhase(attempt('dispatch-1', 'attempt-1'), 'provider_started')).toBe(true);
+			expect(await store.submissions.updateTurnJournalPhase(attempt('dispatch-1', 'attempt-1'), 'tool_request_recorded', {
 				toolRequest: { toolCalls: ['lookup'] },
 			})).toBe(true);
-			expect(store.submissions.getTurnJournal('dispatch-1')).toMatchObject({
+			expect(await store.submissions.getTurnJournal('dispatch-1')).toMatchObject({
 				phase: 'tool_request_recorded',
 				committed: false,
 				toolRequest: { toolCalls: ['lookup'] },
 			});
-			expect(store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1')).toBe(true);
-			expect(store.submissions.getTurnJournal('dispatch-1')).toMatchObject({
+			expect(await store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1')).toBe(true);
+			expect(await store.submissions.getTurnJournal('dispatch-1')).toMatchObject({
 				phase: 'committed',
 				committed: true,
 				committedLeafId: 'leaf-1',
 			});
 		});
 
-		it('double-commit returns false', () => {
+		it('double-commit returns false', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.beginTurnJournal({
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.beginTurnJournal({
 				submissionId: 'dispatch-1',
 				sessionKey: 'agent-session:["agent-1","default","default"]',
 				kind: 'dispatch',
@@ -400,15 +400,15 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				turnId: 'turn-1',
 					phase: 'before_provider',
 				});
-			store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1');
-			expect(store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1')).toBe(false);
+			await store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1');
+			expect(await store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1')).toBe(false);
 		});
 
-		it('resets journal on new turn after commit', () => {
+		it('resets journal on new turn after commit', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.beginTurnJournal({
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.beginTurnJournal({
 				submissionId: 'dispatch-1',
 				sessionKey: 'agent-session:["agent-1","default","default"]',
 				kind: 'dispatch',
@@ -417,9 +417,9 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				turnId: 'turn-1',
 				phase: 'before_provider',
 			});
-			store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1');
+			await store.submissions.commitTurnJournal(attempt('dispatch-1', 'attempt-1'), 'leaf-1');
 
-			store.submissions.beginTurnJournal({
+			await store.submissions.beginTurnJournal({
 				submissionId: 'dispatch-1',
 				sessionKey: 'agent-session:["agent-1","default","default"]',
 				kind: 'dispatch',
@@ -429,7 +429,7 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				phase: 'before_provider',
 			});
 
-			expect(store.submissions.getTurnJournal('dispatch-1')).toMatchObject({
+			expect(await store.submissions.getTurnJournal('dispatch-1')).toMatchObject({
 				phase: 'before_provider',
 				committed: false,
 				operationId: 'op-2',
@@ -437,11 +437,11 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 			});
 		});
 
-		it('replaces the journal attempt and returns the updated submission', () => {
+		it('replaces the journal attempt and returns the updated submission', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.beginTurnJournal({
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.beginTurnJournal({
 				submissionId: 'dispatch-1',
 				sessionKey: 'agent-session:["agent-1","default","default"]',
 				kind: 'dispatch',
@@ -451,7 +451,7 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				phase: 'before_provider',
 			});
 
-			const replaced = store.submissions.replaceTurnJournalAttempt(
+			const replaced = await store.submissions.replaceTurnJournalAttempt(
 				attempt('dispatch-1', 'attempt-1'),
 				'attempt-2',
 			);
@@ -461,7 +461,7 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 				status: 'running',
 				attemptId: 'attempt-2',
 			});
-			expect(store.submissions.getTurnJournal('dispatch-1')).toMatchObject({
+			expect(await store.submissions.getTurnJournal('dispatch-1')).toMatchObject({
 				attemptId: 'attempt-2',
 			});
 		});
@@ -473,7 +473,7 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 	describe('session deletion', () => {
 		it('rejects deletion while submissions are queued or running', async () => {
 			const store = create();
-			store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.admitDispatch(dispatchInput());
 			const sessionKey = 'agent-session:["agent-1","default","default"]';
 
 			await expect(
@@ -490,12 +490,12 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 			});
 
 			const deletion = store.submissions.deleteSession(sessionKey, () => deletionReleased);
-			expect(() => store.submissions.admitDispatch(dispatchInput())).toThrow(
+			await expect(store.submissions.admitDispatch(dispatchInput())).rejects.toThrow(
 				'Durable agent submission admission is unavailable while this session is being deleted.',
 			);
 			releaseDeletion();
 			await deletion;
-			expect(store.submissions.admitDispatch(dispatchInput())).toMatchObject({
+			expect(await store.submissions.admitDispatch(dispatchInput())).toMatchObject({
 				kind: 'submission',
 				submission: { status: 'queued' },
 			});
@@ -533,11 +533,11 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 					throw new Error('snapshot deletion failed');
 				}),
 			).rejects.toThrow('snapshot deletion failed');
-			expect(() => store.submissions.admitDispatch(dispatchInput())).toThrow(
+			await expect(store.submissions.admitDispatch(dispatchInput())).rejects.toThrow(
 				'Durable agent submission admission is unavailable while this session is being deleted.',
 			);
 			await expect(store.submissions.deleteSession(sessionKey, async () => {})).resolves.toBeUndefined();
-			expect(store.submissions.admitDispatch(dispatchInput())).toMatchObject({
+			expect(await store.submissions.admitDispatch(dispatchInput())).toMatchObject({
 				kind: 'submission',
 				submission: { status: 'queued' },
 			});
@@ -546,24 +546,24 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 		it('clears terminal rows when a settled session is deleted', async () => {
 			const store = create();
 			const sessionKey = 'agent-session:["agent-1","default","default"]';
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
 
 			await store.submissions.deleteSession(sessionKey, async () => {});
 
-			expect(store.submissions.getSubmission('dispatch-1')).toBeNull();
+			expect(await store.submissions.getSubmission('dispatch-1')).toBeNull();
 		});
 
 		it('returns retained receipt after deletion removed the settled dispatch row', async () => {
 			const store = create();
 			const sessionKey = 'agent-session:["agent-1","default","default"]';
-			store.submissions.admitDispatch(dispatchInput());
-			store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
-			store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.admitDispatch(dispatchInput());
+			await store.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
+			await store.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
 			await store.submissions.deleteSession(sessionKey, async () => {});
 
-			expect(store.submissions.admitDispatch(dispatchInput())).toEqual({
+			expect(await store.submissions.admitDispatch(dispatchInput())).toEqual({
 				kind: 'retained_receipt',
 				receipt: {
 					submissionId: 'dispatch-1',
@@ -576,19 +576,19 @@ describe.each(backends)('AgentExecutionStore ($name)', ({ create }) => {
 	// ── Edge cases ──────────────────────────────────────────────────────
 
 	describe('edge cases', () => {
-		it('reports no unsettled submissions initially', () => {
+		it('reports no unsettled submissions initially', async () => {
 			const store = create();
-			expect(store.submissions.hasUnsettledSubmissions()).toBe(false);
+			expect(await store.submissions.hasUnsettledSubmissions()).toBe(false);
 		});
 
-		it('getSubmission returns null for unknown ids', () => {
+		it('getSubmission returns null for unknown ids', async () => {
 			const store = create();
-			expect(store.submissions.getSubmission('nonexistent')).toBeNull();
+			expect(await store.submissions.getSubmission('nonexistent')).toBeNull();
 		});
 
-		it('getTurnJournal returns null for unknown submissions', () => {
+		it('getTurnJournal returns null for unknown submissions', async () => {
 			const store = create();
-			expect(store.submissions.getTurnJournal('nonexistent')).toBeNull();
+			expect(await store.submissions.getTurnJournal('nonexistent')).toBeNull();
 		});
 
 	});

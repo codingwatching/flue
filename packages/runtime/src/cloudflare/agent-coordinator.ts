@@ -210,7 +210,7 @@ class CloudflareAgentCoordinator {
 	}
 
 	async wakeSubmissions(): Promise<void> {
-		if (!this.submissions.hasUnsettledSubmissions()) return;
+		if (!(await this.submissions.hasUnsettledSubmissions())) return;
 		await this.armSubmissionWake({ idempotent: false });
 		await this.reconcileSubmissions({ driverAlreadyArmed: true });
 	}
@@ -286,7 +286,7 @@ class CloudflareAgentCoordinator {
 		const attemptId = ctx.snapshot?.attemptId;
 		if (typeof submissionId !== 'string' || typeof attemptId !== 'string') return;
 		await this.restoreSubmissionWake();
-		this.submissions.requestSubmissionRecovery({ submissionId, attemptId });
+		await this.submissions.requestSubmissionRecovery({ submissionId, attemptId });
 	}
 
 	private get agentName(): string {
@@ -340,18 +340,17 @@ class CloudflareAgentCoordinator {
 	}
 
 	private async restoreSubmissionWake(): Promise<boolean> {
-		if (!this.submissions.hasUnsettledSubmissions()) return false;
+		if (!(await this.submissions.hasUnsettledSubmissions())) return false;
 		await this.armSubmissionWake();
 		return true;
 	}
 
 	private async reconcileSubmissions(options: { driverAlreadyArmed?: boolean } = {}): Promise<boolean> {
-		if (!this.submissions.hasUnsettledSubmissions()) return false;
+		if (!(await this.submissions.hasUnsettledSubmissions())) return false;
 		if (!options.driverAlreadyArmed) await this.restoreSubmissionWake();
-		if (!this.submissions.hasUnsettledSubmissions()) return false;
 		try {
 			const attemptMarkers = this.listActiveAttemptMarkers();
-			for (const submission of this.submissions.listRunningSubmissions()) {
+			for (const submission of await this.submissions.listRunningSubmissions()) {
 				if (this.activeAttempts.has(this.submissionAttemptLocalKey(submission))) continue;
 				if (
 					attemptMarkers.has(submissionAttemptMarkerKey(submission)) &&
@@ -364,8 +363,8 @@ class CloudflareAgentCoordinator {
 					this.logSubmissionReconciliationFailure(submission, 'reconcile_submission', error);
 				}
 			}
-			for (const submission of this.submissions.listRunnableSubmissions()) {
-				const claimed = this.submissions.claimSubmission({
+			for (const submission of await this.submissions.listRunnableSubmissions()) {
+				const claimed = await this.submissions.claimSubmission({
 					submissionId: submission.submissionId,
 					attemptId: crypto.randomUUID(),
 				});
@@ -389,7 +388,7 @@ class CloudflareAgentCoordinator {
 			);
 			return true;
 		}
-		return this.submissions.hasUnsettledSubmissions();
+		return await this.submissions.hasUnsettledSubmissions();
 	}
 
 	private logSubmissionReconciliationFailure(
@@ -520,7 +519,7 @@ class CloudflareAgentCoordinator {
 			submissionId: submission.submissionId,
 			attemptId: submission.attemptId,
 		};
-		const persisted = this.submissions.getSubmission(submission.submissionId);
+		const persisted = await this.submissions.getSubmission(submission.submissionId);
 		if (persisted?.status !== 'running' || persisted.attemptId !== attempt.attemptId) return;
 		let ctx: FlueContextInternal | undefined;
 		try {
@@ -560,10 +559,10 @@ class CloudflareAgentCoordinator {
 					journal: createSubmissionJournalCallbacks(this.submissions, submission, attempt),
 				})(operationCtx),
 			);
-			const completed = this.submissions.completeSubmission(attempt);
+			const completed = await this.submissions.completeSubmission(attempt);
 			if (completed && submission.kind === 'direct') this.observers.complete(submission.submissionId, result);
 		} catch (error) {
-			const failed = this.submissions.failSubmission(attempt, error);
+			const failed = await this.submissions.failSubmission(attempt, error);
 			if (failed && submission.kind === 'direct') this.observers.fail(submission.submissionId, error);
 			throw error;
 		} finally {
@@ -583,8 +582,8 @@ class CloudflareAgentCoordinator {
 		}
 	}
 
-	private markInputApplied(attempt: SubmissionAttemptRef): void {
-		if (!this.submissions.markSubmissionInputApplied(attempt)) {
+	private async markInputApplied(attempt: SubmissionAttemptRef): Promise<void> {
+		if (!(await this.submissions.markSubmissionInputApplied(attempt))) {
 			throw new Error('[flue] Agent submission attempt lost ownership before input application.');
 		}
 	}
@@ -606,7 +605,7 @@ class CloudflareAgentCoordinator {
 		const attachment = this.observers.attach(submissionId, { onEvent });
 		try {
 			await this.armSubmissionWake();
-			this.submissions.admitDirect(input);
+			await this.submissions.admitDirect(input);
 			await this.reconcileSubmissions({ driverAlreadyArmed: true });
 			return await attachment.completion;
 		} finally {
@@ -624,7 +623,7 @@ class CloudflareAgentCoordinator {
 			return new Response('Dispatch target unavailable.', { status: 404 });
 		}
 		await this.armSubmissionWake();
-		const admission = this.submissions.admitDispatch(input);
+		const admission = await this.submissions.admitDispatch(input);
 		if (admission.kind === 'retained_receipt') {
 			return Response.json({
 				dispatchId: admission.receipt.submissionId,

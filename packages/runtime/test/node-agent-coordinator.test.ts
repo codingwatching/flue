@@ -167,7 +167,7 @@ describe('NodeAgentCoordinator', () => {
 			const input = makeDispatchInput();
 			await coordinator.admitDispatch(input);
 
-			const submission = executionStore.submissions.getSubmission(input.dispatchId);
+			const submission = await executionStore.submissions.getSubmission(input.dispatchId);
 			expect(submission).toMatchObject({ status: 'settled', kind: 'dispatch' });
 			expect(submission?.error).toBeUndefined();
 		}, 30_000);
@@ -181,10 +181,10 @@ describe('NodeAgentCoordinator', () => {
 
 			// "Restart": open the same file with a fresh store.
 			const reopened = createNodeAgentExecutionStore(dbPath);
-			const submission = reopened.submissions.getSubmission(input.dispatchId);
+			const submission = await reopened.submissions.getSubmission(input.dispatchId);
 			expect(submission).toMatchObject({ status: 'settled', kind: 'dispatch' });
 			expect(submission?.error).toBeUndefined();
-			expect(reopened.submissions.hasUnsettledSubmissions()).toBe(false);
+			expect(await reopened.submissions.hasUnsettledSubmissions()).toBe(false);
 		}, 30_000);
 	});
 
@@ -194,8 +194,8 @@ describe('NodeAgentCoordinator', () => {
 			// First process will be "interrupted" — we manually admit+claim without processing.
 			const store1 = createNodeAgentExecutionStore(dbPath);
 			const input = makeDispatchInput();
-			store1.submissions.admitDispatch(input);
-			store1.submissions.claimSubmission({
+			await store1.submissions.admitDispatch(input);
+			await store1.submissions.claimSubmission({
 				submissionId: input.dispatchId,
 				attemptId: 'attempt-interrupted',
 			});
@@ -205,7 +205,7 @@ describe('NodeAgentCoordinator', () => {
 			const { coordinator, executionStore } = createRealCoordinator(dbPath);
 			await coordinator.reconcileSubmissions();
 
-			const submission = executionStore.submissions.getSubmission(input.dispatchId);
+			const submission = await executionStore.submissions.getSubmission(input.dispatchId);
 			expect(submission).toMatchObject({ status: 'settled' });
 			expect(submission?.error).toBeUndefined();
 		}, 30_000);
@@ -222,13 +222,13 @@ describe('NodeAgentCoordinator', () => {
 
 			// Now manually admit+claim a second dispatch without processing — leave running.
 			const input2 = makeDispatchInput({ dispatchId: 'dispatch-second', session: 'sess-1' });
-			store1.submissions.admitDispatch(input2);
-			store1.submissions.claimSubmission({
+			await store1.submissions.admitDispatch(input2);
+			await store1.submissions.claimSubmission({
 				submissionId: input2.dispatchId,
 				attemptId: 'attempt-interrupted',
 			});
 			// Mark input applied to simulate crash after input was persisted.
-			store1.submissions.markSubmissionInputApplied({
+			await store1.submissions.markSubmissionInputApplied({
 				submissionId: input2.dispatchId,
 				attemptId: 'attempt-interrupted',
 			});
@@ -238,7 +238,7 @@ describe('NodeAgentCoordinator', () => {
 			const { coordinator: coord2, executionStore: store2 } = createFauxCoordinator(dbPath, provider);
 			await coord2.reconcileSubmissions();
 
-			const submission = store2.submissions.getSubmission(input2.dispatchId);
+			const submission = await store2.submissions.getSubmission(input2.dispatchId);
 			expect(submission).toMatchObject({ status: 'settled' });
 			// This should have an error because input was applied but no completed response exists
 			// for this specific submission.
@@ -253,18 +253,18 @@ describe('NodeAgentCoordinator', () => {
 			const store = createNodeAgentExecutionStore(dbPath);
 
 			const input = makeDispatchInput();
-			store.submissions.admitDispatch(input);
+			await store.submissions.admitDispatch(input);
 
 			// Simulate repeated interruptions until retry budget is exhausted.
 			// Default maxRetry is 10. We claim, then replace the attempt to increment count.
-			const claimed = store.submissions.claimSubmission({
+			const claimed = await store.submissions.claimSubmission({
 				submissionId: input.dispatchId,
 				attemptId: 'attempt-0',
 			});
 			expect(claimed).toBeTruthy();
 
 			// Create a journal so replaceTurnJournalAttempt can work.
-			store.submissions.beginTurnJournal({
+			await store.submissions.beginTurnJournal({
 				submissionId: input.dispatchId,
 				sessionKey: claimed!.sessionKey,
 				kind: 'dispatch',
@@ -278,7 +278,7 @@ describe('NodeAgentCoordinator', () => {
 			let currentAttemptId = 'attempt-0';
 			for (let i = 1; i <= 10; i++) {
 				const nextAttemptId = `attempt-${i}`;
-				const replacement = store.submissions.replaceTurnJournalAttempt(
+				const replacement = await store.submissions.replaceTurnJournalAttempt(
 					{ submissionId: input.dispatchId, attemptId: currentAttemptId },
 					nextAttemptId,
 				);
@@ -286,7 +286,7 @@ describe('NodeAgentCoordinator', () => {
 				currentAttemptId = nextAttemptId;
 				// Re-create the journal for the new attempt so the next replace works.
 				if (i < 10) {
-					store.submissions.beginTurnJournal({
+					await store.submissions.beginTurnJournal({
 						submissionId: input.dispatchId,
 						sessionKey: claimed!.sessionKey,
 						kind: 'dispatch',
@@ -299,7 +299,7 @@ describe('NodeAgentCoordinator', () => {
 			}
 
 			// Now attemptCount should be >= maxRetry.
-			const exhausted = store.submissions.getSubmission(input.dispatchId);
+			const exhausted = await store.submissions.getSubmission(input.dispatchId);
 			expect(exhausted?.attemptCount).toBeGreaterThanOrEqual(exhausted?.maxRetry ?? 0);
 
 			// "Restart": reconciliation should terminalize.
@@ -307,7 +307,7 @@ describe('NodeAgentCoordinator', () => {
 			const { coordinator, executionStore } = createFauxCoordinator(dbPath, provider);
 			await coordinator.reconcileSubmissions();
 
-			const submission = executionStore.submissions.getSubmission(input.dispatchId);
+			const submission = await executionStore.submissions.getSubmission(input.dispatchId);
 			expect(submission).toMatchObject({ status: 'settled' });
 			expect(submission?.error).toContain('exceeded maximum recovery attempts');
 		});
@@ -320,11 +320,11 @@ describe('NodeAgentCoordinator', () => {
 			const store = createNodeAgentExecutionStore(dbPath);
 
 			const input = makeDispatchInput();
-			store.submissions.admitDispatch(input);
+			await store.submissions.admitDispatch(input);
 
 			// Claim with a timeout that's already expired.
 			const pastTimeout = Date.now() - 1000;
-			store.submissions.claimSubmission(
+			await store.submissions.claimSubmission(
 				{ submissionId: input.dispatchId, attemptId: 'attempt-timeout' },
 				{ maxRetry: 10, timeoutAt: pastTimeout },
 			);
@@ -334,7 +334,7 @@ describe('NodeAgentCoordinator', () => {
 			const { coordinator, executionStore } = createFauxCoordinator(dbPath, provider);
 			await coordinator.reconcileSubmissions();
 
-			const submission = executionStore.submissions.getSubmission(input.dispatchId);
+			const submission = await executionStore.submissions.getSubmission(input.dispatchId);
 			expect(submission).toMatchObject({ status: 'settled' });
 			expect(submission?.error).toContain('exceeded configured timeout');
 		});
@@ -347,17 +347,17 @@ describe('NodeAgentCoordinator', () => {
 			provider.setResponses([fauxAssistantMessage('Completed after preserved tool result.')]);
 			const store = createNodeAgentExecutionStore(dbPath);
 			const input = makeDispatchInput({ session: 'tool-result-session' });
-			store.submissions.admitDispatch(input);
-			const claimed = store.submissions.claimSubmission({
+			await store.submissions.admitDispatch(input);
+			const claimed = await store.submissions.claimSubmission({
 				submissionId: input.dispatchId,
 				attemptId: 'attempt-tool-result',
 			});
 			expect(claimed).toBeTruthy();
-			store.submissions.markSubmissionInputApplied({
+			await store.submissions.markSubmissionInputApplied({
 				submissionId: input.dispatchId,
 				attemptId: 'attempt-tool-result',
 			});
-			store.submissions.beginTurnJournal({
+			await store.submissions.beginTurnJournal({
 				submissionId: input.dispatchId,
 				sessionKey: claimed!.sessionKey,
 				kind: 'dispatch',
@@ -366,7 +366,7 @@ describe('NodeAgentCoordinator', () => {
 				turnId: 'turn-1',
 				phase: 'before_provider',
 			});
-			store.submissions.updateTurnJournalPhase(
+			await store.submissions.updateTurnJournalPhase(
 				{ submissionId: input.dispatchId, attemptId: 'attempt-tool-result' },
 				'tool_request_recorded',
 				{
@@ -377,7 +377,7 @@ describe('NodeAgentCoordinator', () => {
 			);
 			const storageKey = createSessionStorageKey('instance-1', 'default', 'tool-result-session');
 			const now = new Date().toISOString();
-			store.sessions.save(storageKey, {
+			await store.sessions.save(storageKey, {
 				version: 5,
 				affinityKey: generateSessionAffinityKey(),
 				entries: [
@@ -442,7 +442,7 @@ describe('NodeAgentCoordinator', () => {
 			const { coordinator, executionStore } = createFauxCoordinator(dbPath, provider);
 			await coordinator.reconcileSubmissions();
 
-			const submission = executionStore.submissions.getSubmission(input.dispatchId);
+			const submission = await executionStore.submissions.getSubmission(input.dispatchId);
 			expect(submission).toMatchObject({ status: 'settled' });
 			expect(submission?.error).toBeUndefined();
 		});
@@ -460,21 +460,21 @@ describe('NodeAgentCoordinator', () => {
 			// Manually build the interrupted session state in the store.
 			const store = createNodeAgentExecutionStore(dbPath);
 			const input = makeDispatchInput({ session: 'tool-repair-session' });
-			store.submissions.admitDispatch(input);
-			const claimed = store.submissions.claimSubmission({
+			await store.submissions.admitDispatch(input);
+			const claimed = await store.submissions.claimSubmission({
 				submissionId: input.dispatchId,
 				attemptId: 'attempt-tool-repair',
 			});
 			expect(claimed).toBeTruthy();
 
 			// Mark input applied (the submission got past input application).
-			store.submissions.markSubmissionInputApplied({
+			await store.submissions.markSubmissionInputApplied({
 				submissionId: input.dispatchId,
 				attemptId: 'attempt-tool-repair',
 			});
 
 			// Create a journal at tool_request_recorded phase (interrupted during tool execution).
-			store.submissions.beginTurnJournal({
+			await store.submissions.beginTurnJournal({
 				submissionId: input.dispatchId,
 				sessionKey: claimed!.sessionKey,
 				kind: 'dispatch',
@@ -483,7 +483,7 @@ describe('NodeAgentCoordinator', () => {
 				turnId: 'turn-1',
 				phase: 'before_provider',
 			});
-			store.submissions.updateTurnJournalPhase(
+			await store.submissions.updateTurnJournalPhase(
 				{ submissionId: input.dispatchId, attemptId: 'attempt-tool-repair' },
 				'tool_request_recorded',
 				{ toolRequest: { toolCalls: toolCalls.map((tc) => ({ type: 'toolCall' as const, ...tc })) } },
@@ -492,7 +492,7 @@ describe('NodeAgentCoordinator', () => {
 			// Also persist the session history up to the tool calls (user msg + assistant msg).
 			const storageKey = createSessionStorageKey('instance-1', 'default', 'tool-repair-session');
 			const now = new Date().toISOString();
-			store.sessions.save(storageKey, {
+			await store.sessions.save(storageKey, {
 				version: 5,
 				affinityKey: generateSessionAffinityKey(),
 				entries: [
@@ -551,7 +551,7 @@ describe('NodeAgentCoordinator', () => {
 			const { coordinator, executionStore } = createFauxCoordinator(dbPath, provider);
 			await coordinator.reconcileSubmissions();
 
-			const submission = executionStore.submissions.getSubmission(input.dispatchId);
+			const submission = await executionStore.submissions.getSubmission(input.dispatchId);
 			expect(submission).toMatchObject({ status: 'settled' });
 			expect(submission?.error).toBeUndefined();
 		});
@@ -565,11 +565,11 @@ describe('NodeAgentCoordinator', () => {
 			// Admit two dispatches to the same session.
 			const inputA = makeDispatchInput({ dispatchId: 'dispatch-A', session: 'ordered-session' });
 			const inputB = makeDispatchInput({ dispatchId: 'dispatch-B', session: 'ordered-session' });
-			store.submissions.admitDispatch(inputA);
-			store.submissions.admitDispatch(inputB);
+			await store.submissions.admitDispatch(inputA);
+			await store.submissions.admitDispatch(inputB);
 
 			// Claim A (the session head), leave B queued.
-			store.submissions.claimSubmission({
+			await store.submissions.claimSubmission({
 				submissionId: inputA.dispatchId,
 				attemptId: 'attempt-A',
 			});
@@ -580,13 +580,13 @@ describe('NodeAgentCoordinator', () => {
 			const { coordinator, executionStore } = createRealCoordinator(dbPath);
 			await coordinator.reconcileSubmissions();
 
-			const subA = executionStore.submissions.getSubmission(inputA.dispatchId);
-			const subB = executionStore.submissions.getSubmission(inputB.dispatchId);
+			const subA = await executionStore.submissions.getSubmission(inputA.dispatchId);
+			const subB = await executionStore.submissions.getSubmission(inputB.dispatchId);
 			expect(subA).toMatchObject({ status: 'settled' });
 			expect(subA?.error).toBeUndefined();
 			expect(subB).toMatchObject({ status: 'settled' });
 			expect(subB?.error).toBeUndefined();
-			expect(executionStore.submissions.hasUnsettledSubmissions()).toBe(false);
+			expect(await executionStore.submissions.hasUnsettledSubmissions()).toBe(false);
 		}, 60_000);
 
 		it.skipIf(!hasApiKey)('processes queued submissions from different sessions independently', async () => {
@@ -599,8 +599,8 @@ describe('NodeAgentCoordinator', () => {
 			await coordinator.admitDispatch(inputA);
 			await coordinator.admitDispatch(inputB);
 
-			const subA = executionStore.submissions.getSubmission(inputA.dispatchId);
-			const subB = executionStore.submissions.getSubmission(inputB.dispatchId);
+			const subA = await executionStore.submissions.getSubmission(inputA.dispatchId);
+			const subB = await executionStore.submissions.getSubmission(inputB.dispatchId);
 			expect(subA).toMatchObject({ status: 'settled' });
 			expect(subA?.error).toBeUndefined();
 			expect(subB).toMatchObject({ status: 'settled' });
@@ -615,7 +615,7 @@ describe('NodeAgentCoordinator', () => {
 
 			// Pre-queue a submission from a "previous process" that was never claimed.
 			const inputOld = makeDispatchInput({ dispatchId: 'dispatch-old', session: 'drain-session' });
-			store.submissions.admitDispatch(inputOld);
+			await store.submissions.admitDispatch(inputOld);
 
 			// Now create a fresh coordinator and dispatch a new submission to a different session.
 			const { coordinator, executionStore } = createRealCoordinator(dbPath);
@@ -624,8 +624,8 @@ describe('NodeAgentCoordinator', () => {
 			await coordinator.admitDispatch(inputNew);
 
 			// Both should be settled: the new one from direct processing, the old one from drain.
-			const subOld = executionStore.submissions.getSubmission(inputOld.dispatchId);
-			const subNew = executionStore.submissions.getSubmission(inputNew.dispatchId);
+			const subOld = await executionStore.submissions.getSubmission(inputOld.dispatchId);
+			const subNew = await executionStore.submissions.getSubmission(inputNew.dispatchId);
 			expect(subNew).toMatchObject({ status: 'settled' });
 			expect(subNew?.error).toBeUndefined();
 			expect(subOld).toMatchObject({ status: 'settled' });

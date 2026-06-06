@@ -175,7 +175,7 @@ describe('createCloudflareAgentRuntime()', () => {
 		const runtime = makeRuntime();
 		const instance = makeInstance(storage, events);
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.admitDirect(directInput());
 
 		await runtime.onStart(instance, () => {
 			events.push('inherited-start');
@@ -190,7 +190,7 @@ describe('createCloudflareAgentRuntime()', () => {
 		const runtime = makeRuntime();
 		const instance = makeInstance(storage, events);
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.admitDirect(directInput());
 
 		await runtime.wakeSubmissions(instance);
 
@@ -203,8 +203,8 @@ describe('createCloudflareAgentRuntime()', () => {
 		const runtime = makeRuntime();
 		const instance = makeInstance(storage, events);
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDirect(directInput());
-		executionStore.submissions.claimSubmission({ submissionId: 'direct-1', attemptId: 'attempt-1' });
+		await executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.claimSubmission({ submissionId: 'direct-1', attemptId: 'attempt-1' });
 
 		await runtime.onFiberRecovered(
 			instance,
@@ -225,11 +225,11 @@ describe('createCloudflareAgentRuntime()', () => {
 			null,
 			Date.now(),
 		);
-		executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.admitDirect(directInput());
 
 		await runtime.onStart(instance, () => {});
 
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
+		expect(await executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
 	});
 
 	it('skips malformed raw Fiber markers and continues reconciliation', async () => {
@@ -242,12 +242,12 @@ describe('createCloudflareAgentRuntime()', () => {
 			'null',
 			Date.now(),
 		);
-		executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.admitDirect(directInput());
 
 		await runtime.onStart(instance, () => {});
 
 		// Malformed marker is skipped; the queued submission is claimed and processed.
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
+		expect(await executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
 	});
 
 	it('requeues interrupted attempts when canonical input is absent', async () => {
@@ -260,13 +260,13 @@ describe('createCloudflareAgentRuntime()', () => {
 		});
 		const instance = makeInstance(storage);
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDirect(directInput());
-		executionStore.submissions.claimSubmission({ submissionId: 'direct-1', attemptId: 'attempt-1' });
+		await executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.claimSubmission({ submissionId: 'direct-1', attemptId: 'attempt-1' });
 
 		await runtime.onStart(instance, () => {});
 
 		expect(events).toContain('requeue');
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
+		expect(await executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
 	});
 
 	it('records interruption before settling applied incomplete canonical input as error', async () => {
@@ -283,15 +283,15 @@ describe('createCloudflareAgentRuntime()', () => {
 		});
 		const instance = makeInstance(storage);
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDirect(directInput());
-		executionStore.submissions.claimSubmission({ submissionId: 'direct-1', attemptId: 'attempt-1' });
-		executionStore.submissions.markSubmissionInputApplied({ submissionId: 'direct-1', attemptId: 'attempt-1' });
+		await executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.claimSubmission({ submissionId: 'direct-1', attemptId: 'attempt-1' });
+		await executionStore.submissions.markSubmissionInputApplied({ submissionId: 'direct-1', attemptId: 'attempt-1' });
 
 		await runtime.onStart(instance, () => {});
 
 		expect(events).toEqual(['record-terminal', 'settle']);
 		expect(payloads).toEqual([directInput(), directInput().payload]);
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'settled' });
+		expect(await executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'settled' });
 	});
 
 	it('settles interrupted attempts when canonical completion is already persisted', async () => {
@@ -303,13 +303,13 @@ describe('createCloudflareAgentRuntime()', () => {
 		});
 		const instance = makeInstance(storage);
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDirect(directInput());
-		executionStore.submissions.claimSubmission({ submissionId: 'direct-1', attemptId: 'attempt-1' });
-		executionStore.submissions.markSubmissionInputApplied({ submissionId: 'direct-1', attemptId: 'attempt-1' });
+		await executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.claimSubmission({ submissionId: 'direct-1', attemptId: 'attempt-1' });
+		await executionStore.submissions.markSubmissionInputApplied({ submissionId: 'direct-1', attemptId: 'attempt-1' });
 
 		await runtime.onStart(instance, () => {});
 
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'settled' });
+		expect(await executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'settled' });
 	});
 
 	it('starts unrelated queued sessions when interrupted-session inspection fails', async () => {
@@ -344,16 +344,16 @@ describe('createCloudflareAgentRuntime()', () => {
 		const instance = makeInstance(storage);
 		instance.runFiber = async (_name, callback) => callback({ stash() {} });
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDirect(directInput());
-		executionStore.submissions.claimSubmission({ submissionId: 'direct-1', attemptId: 'attempt-1' });
-		executionStore.submissions.admitDirect(directInput({ submissionId: 'direct-2', session: 'healthy' }));
+		await executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.claimSubmission({ submissionId: 'direct-1', attemptId: 'attempt-1' });
+		await executionStore.submissions.admitDirect(directInput({ submissionId: 'direct-2', session: 'healthy' }));
 
 		await runtime.onStart(instance, () => {});
 		await processed;
 
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
-		await vi.waitFor(() => {
-			expect(executionStore.submissions.getSubmission('direct-2')).toMatchObject({ status: 'settled' });
+		expect(await executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
+		await vi.waitFor(async () => {
+			expect(await executionStore.submissions.getSubmission('direct-2')).toMatchObject({ status: 'settled' });
 		});
 		expect(consoleError).toHaveBeenCalledWith(
 			'[flue:submission-reconciliation]',
@@ -378,14 +378,14 @@ describe('createCloudflareAgentRuntime()', () => {
 			return new Promise<void>(() => {});
 		};
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDirect(directInput());
-		executionStore.submissions.admitDirect(directInput({ submissionId: 'direct-2', session: 'healthy' }));
+		await executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.admitDirect(directInput({ submissionId: 'direct-2', session: 'healthy' }));
 
 		await runtime.onStart(instance, () => {});
 
 		expect(startCalls).toBe(2);
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
-		expect(executionStore.submissions.getSubmission('direct-2')).toMatchObject({ status: 'running' });
+		expect(await executionStore.submissions.getSubmission('direct-1')).toMatchObject({ status: 'running' });
+		expect(await executionStore.submissions.getSubmission('direct-2')).toMatchObject({ status: 'running' });
 		expect(consoleError).toHaveBeenCalledWith(
 			'[flue:submission-reconciliation]',
 			expect.objectContaining({
@@ -414,19 +414,19 @@ describe('createCloudflareAgentRuntime()', () => {
 			return new Promise<void>(() => {});
 		};
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDirect(directInput());
+		await executionStore.submissions.admitDirect(directInput());
 
 		await runtime.onStart(instance, () => {});
-		const failedAttempt = executionStore.submissions.getSubmission('direct-1')?.attemptId;
+		const failedAttempt = (await executionStore.submissions.getSubmission('direct-1'))?.attemptId;
 		await runtime.wakeSubmissions(instance);
 
 		expect(startCalls).toBe(2);
 		expect(events).toContain('requeue');
-		expect(executionStore.submissions.getSubmission('direct-1')).toMatchObject({
+		expect(await executionStore.submissions.getSubmission('direct-1')).toMatchObject({
 			status: 'running',
 			attemptId: expect.any(String),
 		});
-		expect(executionStore.submissions.getSubmission('direct-1')?.attemptId).not.toBe(failedAttempt);
+		expect((await executionStore.submissions.getSubmission('direct-1'))?.attemptId).not.toBe(failedAttempt);
 	});
 
 	it('uses the public dispatch input as processing context payload without internal envelope fields', async () => {
@@ -461,7 +461,7 @@ describe('createCloudflareAgentRuntime()', () => {
 		const instance = makeInstance(storage);
 		instance.runFiber = async (_name, callback) => callback({ stash() {} });
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDispatch(dispatchInput());
+		await executionStore.submissions.admitDispatch(dispatchInput());
 
 		await runtime.onStart(instance, () => {});
 		await processed;
@@ -482,13 +482,13 @@ describe('createCloudflareAgentRuntime()', () => {
 		});
 		const instance = makeInstance(storage);
 		const executionStore = prepare(runtime, instance);
-		executionStore.submissions.admitDispatch(dispatchInput());
-		executionStore.submissions.claimSubmission({ submissionId: 'dispatch-1', attemptId: 'attempt-1' });
-		executionStore.submissions.markSubmissionInputApplied({ submissionId: 'dispatch-1', attemptId: 'attempt-1' });
+		await executionStore.submissions.admitDispatch(dispatchInput());
+		await executionStore.submissions.claimSubmission({ submissionId: 'dispatch-1', attemptId: 'attempt-1' });
+		await executionStore.submissions.markSubmissionInputApplied({ submissionId: 'dispatch-1', attemptId: 'attempt-1' });
 
 		await runtime.onStart(instance, () => {});
 
 		expect(payloads).toEqual([dispatchInput()]);
-		expect(executionStore.submissions.getSubmission('dispatch-1')).toMatchObject({ status: 'settled' });
+		expect(await executionStore.submissions.getSubmission('dispatch-1')).toMatchObject({ status: 'settled' });
 	});
 });

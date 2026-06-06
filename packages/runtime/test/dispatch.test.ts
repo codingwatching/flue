@@ -1056,7 +1056,7 @@ describe('repairInterruptedToolCalls()', () => {
 				}),
 		});
 		const originalUpdate = executionStore.submissions.updateTurnJournalPhase.bind(executionStore.submissions);
-		executionStore.submissions.updateTurnJournalPhase = (attempt, phase, options) => {
+		executionStore.submissions.updateTurnJournalPhase = async (attempt, phase, options) => {
 			events.push({ type: 'phase', phase });
 			return originalUpdate(attempt, phase, options);
 		};
@@ -1124,7 +1124,7 @@ describe('repairInterruptedToolCalls()', () => {
 		});
 
 		const originalUpdate = executionStore.submissions.updateTurnJournalPhase.bind(executionStore.submissions);
-		executionStore.submissions.updateTurnJournalPhase = (attempt, phase, options) => {
+		executionStore.submissions.updateTurnJournalPhase = async (attempt, phase, options) => {
 			phases.push(phase);
 			return originalUpdate(attempt, phase, options);
 		};
@@ -1134,7 +1134,7 @@ describe('repairInterruptedToolCalls()', () => {
 		expect(phases).toContain('provider_started');
 		expect(phases).toContain('tool_request_recorded');
 		expect(phases.filter((p) => p === 'before_provider').length).toBeGreaterThanOrEqual(1);
-		const journal = executionStore.submissions.getTurnJournal(dispatchInput.dispatchId);
+		const journal = await executionStore.submissions.getTurnJournal(dispatchInput.dispatchId);
 		expect(journal?.committed).toBe(true);
 	});
 });

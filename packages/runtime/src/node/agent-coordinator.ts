@@ -61,7 +61,7 @@ export function createNodeAgentCoordinator(options: {
 			submissionId: submission.submissionId,
 			attemptId: submission.attemptId,
 		};
-		const persisted = submissions.getSubmission(submission.submissionId);
+		const persisted = await submissions.getSubmission(submission.submissionId);
 		if (persisted?.status !== 'running' || persisted.attemptId !== attempt.attemptId) return;
 
 		const agentName = input.agent;
@@ -79,17 +79,17 @@ export function createNodeAgentCoordinator(options: {
 
 		try {
 			await createAgentSubmissionHandler(agent, input, {
-				onInputApplied: () => {
-					if (!submissions.markSubmissionInputApplied(attempt)) {
+				onInputApplied: async () => {
+					if (!(await submissions.markSubmissionInputApplied(attempt))) {
 						throw new Error('[flue] Agent submission attempt lost ownership before input application.');
 					}
 				},
 				timeoutAt: submission.timeoutAt > 0 ? submission.timeoutAt : undefined,
 				journal: createSubmissionJournalCallbacks(submissions, submission, attempt),
 			})(ctx);
-			submissions.completeSubmission(attempt);
+			await submissions.completeSubmission(attempt);
 		} catch (error) {
-			submissions.failSubmission(attempt, error);
+			await submissions.failSubmission(attempt, error);
 			throw error;
 		}
 	}
@@ -97,11 +97,11 @@ export function createNodeAgentCoordinator(options: {
 	async function drainRunnableSubmissions(): Promise<void> {
 		// Re-query after each processed submission because settling one session
 		// head may make the next same-session submission runnable.
-		let runnable: ReturnType<typeof submissions.listRunnableSubmissions>;
-		while ((runnable = submissions.listRunnableSubmissions()).length > 0) {
+		let runnable: AgentSubmission[];
+		while ((runnable = await submissions.listRunnableSubmissions()).length > 0) {
 			let progressed = false;
 			for (const submission of runnable) {
-				const claimed = submissions.claimSubmission({
+				const claimed = await submissions.claimSubmission({
 					submissionId: submission.submissionId,
 					attemptId: crypto.randomUUID(),
 				});
@@ -128,10 +128,10 @@ export function createNodeAgentCoordinator(options: {
 
 	return {
 		async reconcileSubmissions() {
-			if (!submissions.hasUnsettledSubmissions()) return;
+			if (!(await submissions.hasUnsettledSubmissions())) return;
 
 			// Reconcile running submissions (orphaned from previous process).
-			for (const submission of submissions.listRunningSubmissions()) {
+			for (const submission of await submissions.listRunningSubmissions()) {
 				const agentName = submission.input.agent;
 				const agent = agents[agentName];
 				if (!agent) {
@@ -190,11 +190,11 @@ export function createNodeAgentCoordinator(options: {
 				throw new Error(`[flue] dispatch target agent "${input.agent}" has no created agent.`);
 			}
 
-			const admission = submissions.admitDispatch(input);
+			const admission = await submissions.admitDispatch(input);
 			if (admission.kind !== 'submission') return;
 
 			const submission = admission.submission;
-			const claimed = submissions.claimSubmission({
+			const claimed = await submissions.claimSubmission({
 				submissionId: submission.submissionId,
 				attemptId: crypto.randomUUID(),
 			});

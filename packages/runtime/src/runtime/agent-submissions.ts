@@ -233,19 +233,16 @@ export function createAgentSubmissionObserverRegistry(): AgentSubmissionObserver
  * journal phase lifecycle; this factory eliminates the duplication.
  */
 export function createSubmissionJournalCallbacks(
-	submissions: Pick<
-		import('../agent-execution-store.ts').AgentSubmissionStore,
-		'beginTurnJournal' | 'updateTurnJournalPhase' | 'commitTurnJournal'
-	>,
+	submissions: Pick<AgentSubmissionStore, 'beginTurnJournal' | 'updateTurnJournalPhase' | 'commitTurnJournal'>,
 	submission: { submissionId: string; sessionKey: string; kind: 'dispatch' | 'direct' },
-	attempt: import('../agent-execution-store.ts').SubmissionAttemptRef,
+	attempt: SubmissionAttemptRef,
 ): NonNullable<ProcessAgentSubmissionOptions['journal']> {
 	let journalTurnId: string | undefined;
 	return {
-		beforeProvider: (state) => {
+		beforeProvider: async (state) => {
 			if (state.turnId !== journalTurnId) {
 				journalTurnId = state.turnId;
-				submissions.beginTurnJournal({
+				await submissions.beginTurnJournal({
 					submissionId: submission.submissionId,
 					sessionKey: submission.sessionKey,
 					kind: submission.kind,
@@ -257,24 +254,24 @@ export function createSubmissionJournalCallbacks(
 				});
 			}
 		},
-		providerStarted: (state) => {
-			submissions.updateTurnJournalPhase(attempt, 'provider_started', {
+		providerStarted: async (state) => {
+			await submissions.updateTurnJournalPhase(attempt, 'provider_started', {
 				checkpointLeafId: state.checkpointLeafId,
 			});
 		},
-		toolRequestRecorded: (state) => {
-			submissions.updateTurnJournalPhase(attempt, 'tool_request_recorded', {
+		toolRequestRecorded: async (state) => {
+			await submissions.updateTurnJournalPhase(attempt, 'tool_request_recorded', {
 				checkpointLeafId: state.checkpointLeafId,
 				toolRequest: state.toolRequest,
 			});
 		},
-		checkpointReady: (state) => {
-			submissions.updateTurnJournalPhase(attempt, 'before_provider', {
+		checkpointReady: async (state) => {
+			await submissions.updateTurnJournalPhase(attempt, 'before_provider', {
 				checkpointLeafId: state.checkpointLeafId,
 			});
 		},
-		committed: (state) => {
-			submissions.commitTurnJournal(attempt, state.committedLeafId);
+		committed: async (state) => {
+			await submissions.commitTurnJournal(attempt, state.committedLeafId);
 		},
 	};
 }
@@ -334,14 +331,14 @@ export async function reconcileInterruptedSubmission(
 	const state = await createAgentSubmissionInspectionHandler(agent, input)(ctx);
 
 	// Check turn journal for pre-commit interruption that can be retried.
-	const journal = submissions.getTurnJournal(submission.submissionId);
+	const journal = await submissions.getTurnJournal(submission.submissionId);
 	if (
 		journal &&
 		(journal.phase === 'before_provider' || journal.phase === 'provider_started') &&
 		!journal.committed &&
 		state === 'continuable'
 	) {
-		const replacement = submissions.replaceTurnJournalAttempt(attempt, crypto.randomUUID());
+		const replacement = await submissions.replaceTurnJournalAttempt(attempt, crypto.randomUUID());
 		if (replacement) return { replacement, failedError: null };
 	}
 
@@ -358,14 +355,14 @@ export async function reconcileInterruptedSubmission(
 			journal.toolRequest as AgentSubmissionToolRequest,
 		)(repairCtx)) as string | undefined;
 		if (repairedLeafId) {
-			submissions.updateTurnJournalPhase(attempt, 'before_provider', {
+			await submissions.updateTurnJournalPhase(attempt, 'before_provider', {
 				checkpointLeafId: repairedLeafId,
 			});
-			const replacement = submissions.replaceTurnJournalAttempt(attempt, crypto.randomUUID());
+			const replacement = await submissions.replaceTurnJournalAttempt(attempt, crypto.randomUUID());
 			if (replacement) return { replacement, failedError: null };
 		}
 		if (state === 'continuable') {
-			const replacement = submissions.replaceTurnJournalAttempt(attempt, crypto.randomUUID());
+			const replacement = await submissions.replaceTurnJournalAttempt(attempt, crypto.randomUUID());
 			if (replacement) return { replacement, failedError: null };
 		}
 	}
@@ -373,7 +370,7 @@ export async function reconcileInterruptedSubmission(
 	// Pre-input-application interruption.
 	if (submission.inputAppliedAt === undefined) {
 		if (state === 'absent') {
-			submissions.requeueSubmissionBeforeInputApplied(attempt);
+			await submissions.requeueSubmissionBeforeInputApplied(attempt);
 			return { replacement: null, failedError: null };
 		}
 		const error = new Error(
@@ -388,7 +385,7 @@ export async function reconcileInterruptedSubmission(
 
 	// Post-input-application: check if the session already completed.
 	if (state === 'completed') {
-		submissions.completeSubmission(attempt);
+		await submissions.completeSubmission(attempt);
 		return { replacement: null, failedError: null };
 	}
 
@@ -436,7 +433,7 @@ async function failInterruptedSubmission(
 		message: error.message,
 		interruptedTools,
 	})(ctx);
-	return submissions.failSubmission(attempt, error);
+	return await submissions.failSubmission(attempt, error);
 }
 
 function submissionAttemptRef(submission: AgentSubmission): SubmissionAttemptRef | null {

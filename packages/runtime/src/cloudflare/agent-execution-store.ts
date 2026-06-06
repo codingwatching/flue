@@ -113,12 +113,12 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		private transactionSync: NonNullable<DurableObjectStorage['transactionSync']>,
 	) {}
 
-	getSubmission(submissionId: string): AgentSubmission | null {
+	async getSubmission(submissionId: string): Promise<AgentSubmission | null> {
 		const row = this.readSubmissionRow(submissionId);
 		return row ? parseSubmission(row) : null;
 	}
 
-	getTurnJournal(submissionId: string): AgentTurnJournal | null {
+	async getTurnJournal(submissionId: string): Promise<AgentTurnJournal | null> {
 		const row = this.sql
 			.exec(
 				`SELECT submission_id, session_key, kind, attempt_id, operation_id, turn_id,
@@ -133,7 +133,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		return row ? parseTurnJournal(row) : null;
 	}
 
-	beginTurnJournal(input: CreateTurnJournalInput): boolean {
+	async beginTurnJournal(input: CreateTurnJournalInput): Promise<boolean> {
 		const now = Date.now();
 		return (
 			this.sql
@@ -171,11 +171,11 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		);
 	}
 
-	updateTurnJournalPhase(
+	async updateTurnJournalPhase(
 		attempt: SubmissionAttemptRef,
 		phase: AgentTurnJournalPhase,
 		options: { checkpointLeafId?: string; toolRequest?: unknown } = {},
-	): boolean {
+	): Promise<boolean> {
 		const now = Date.now();
 		return (
 			this.sql
@@ -197,7 +197,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		);
 	}
 
-	commitTurnJournal(attempt: SubmissionAttemptRef, committedLeafId: string): boolean {
+	async commitTurnJournal(attempt: SubmissionAttemptRef, committedLeafId: string): Promise<boolean> {
 		const now = Date.now();
 		return (
 			this.sql
@@ -216,7 +216,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		);
 	}
 
-	replaceTurnJournalAttempt(attempt: SubmissionAttemptRef, nextAttemptId: string): AgentSubmission | null {
+	async replaceTurnJournalAttempt(attempt: SubmissionAttemptRef, nextAttemptId: string): Promise<AgentSubmission | null> {
 		return this.transactionSync(() => {
 			const row = this.sql
 				.exec(
@@ -258,11 +258,11 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		return { submissionId: row.dispatch_id, acceptedAt: row.accepted_at };
 	}
 
-	admitDispatch(input: DispatchInput): AgentDispatchAdmission {
+	async admitDispatch(input: DispatchInput): Promise<AgentDispatchAdmission> {
 		return this.admitSubmission(createDispatchAgentSubmissionInput(input));
 	}
 
-	admitDirect(input: DirectAgentSubmissionInput): AgentSubmission {
+	async admitDirect(input: DirectAgentSubmissionInput): Promise<AgentSubmission> {
 		const admission = this.admitSubmission(input);
 		if (admission.kind !== 'submission') {
 			throw new Error('[flue] Internal direct admission returned an unexpected result.');
@@ -270,7 +270,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		return admission.submission;
 	}
 
-	hasUnsettledSubmissions(): boolean {
+	async hasUnsettledSubmissions(): Promise<boolean> {
 		return (
 			this.sql
 				.exec(
@@ -283,7 +283,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		);
 	}
 
-	listRunnableSubmissions(): AgentSubmission[] {
+	async listRunnableSubmissions(): Promise<AgentSubmission[]> {
 		const rows = this.sql
 			.exec(
 				`SELECT ${submissionColumnsFor('current')}
@@ -302,7 +302,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		return this.parseOperationalRows(rows, 'queued');
 	}
 
-	listRunningSubmissions(): AgentSubmission[] {
+	async listRunningSubmissions(): Promise<AgentSubmission[]> {
 		return this.parseOperationalRows(
 			this.sql
 				.exec(
@@ -374,10 +374,10 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		}
 	}
 
-	claimSubmission(
+	async claimSubmission(
 		attempt: SubmissionAttemptRef,
 		durability?: { maxRetry: number; timeoutAt: number },
-	): AgentSubmission | null {
+	): Promise<AgentSubmission | null> {
 		const now = Date.now();
 		const maxRetry = durability?.maxRetry ?? DURABILITY_DEFAULT_MAX_RETRY;
 		const timeoutAt = durability?.timeoutAt ?? (now + DURABILITY_DEFAULT_TIMEOUT_MINUTES * 60_000);
@@ -405,7 +405,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		return row ? parseSubmission(row) : null;
 	}
 
-	markSubmissionInputApplied(attempt: SubmissionAttemptRef): boolean {
+	async markSubmissionInputApplied(attempt: SubmissionAttemptRef): Promise<boolean> {
 		return this.updateOwnedSubmission(
 			`UPDATE flue_agent_submissions
 			 SET input_applied_at = COALESCE(input_applied_at, ?)
@@ -417,7 +417,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		);
 	}
 
-	requestSubmissionRecovery(attempt: SubmissionAttemptRef): boolean {
+	async requestSubmissionRecovery(attempt: SubmissionAttemptRef): Promise<boolean> {
 		return this.updateOwnedSubmission(
 			`UPDATE flue_agent_submissions
 			 SET recovery_requested_at = COALESCE(recovery_requested_at, ?)
@@ -429,7 +429,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		);
 	}
 
-	requeueSubmissionBeforeInputApplied(attempt: SubmissionAttemptRef): boolean {
+	async requeueSubmissionBeforeInputApplied(attempt: SubmissionAttemptRef): Promise<boolean> {
 		return (
 			this.sql
 				.exec(
@@ -445,7 +445,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		);
 	}
 
-	completeSubmission(attempt: SubmissionAttemptRef): boolean {
+	async completeSubmission(attempt: SubmissionAttemptRef): Promise<boolean> {
 		return this.updateOwnedSubmission(
 			`UPDATE flue_agent_submissions
 			 SET status = 'settled', settled_at = ?, error = NULL
@@ -457,7 +457,7 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 		);
 	}
 
-	failSubmission(attempt: SubmissionAttemptRef, error: unknown): boolean {
+	async failSubmission(attempt: SubmissionAttemptRef, error: unknown): Promise<boolean> {
 		return this.updateOwnedSubmission(
 			`UPDATE flue_agent_submissions
 			 SET status = 'settled', settled_at = ?, error = ?
