@@ -30,6 +30,13 @@ export { InMemoryRunRegistry } from './node/run-registry.ts';
 export { InMemoryRunStore } from './node/run-store.ts';
 export { DURABILITY_DEFAULT_MAX_RETRY, DURABILITY_DEFAULT_TIMEOUT_MINUTES } from './agent-execution-store.ts';
 export type { PersistenceAdapter } from './agent-execution-store.ts';
+export {
+	deduplicateSessionDeletion,
+	isDirectPayload,
+	isSubmissionPayload,
+	parseAcceptedAt,
+} from './adapter-helpers.ts';
+export type { SubmissionPayloadContext } from './adapter-helpers.ts';
 export type { DispatchInput, DispatchQueue } from './runtime/dispatch-queue.ts';
 export type { ExposedTransport, FlueRuntime } from './runtime/flue-app.ts';
 export {

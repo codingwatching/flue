@@ -14,6 +14,11 @@ import {
 	DURABILITY_DEFAULT_MAX_RETRY,
 	DURABILITY_DEFAULT_TIMEOUT_MINUTES,
 } from '../agent-execution-store.ts';
+import {
+	deduplicateSessionDeletion,
+	isSubmissionPayload,
+	parseAcceptedAt,
+} from '../adapter-helpers.ts';
 
 type SqlRow = Record<string, unknown>;
 import {
@@ -317,15 +322,9 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 	}
 
 	deleteSession(sessionKey: string, deleteSessionTree: () => Promise<void>): Promise<void> {
-		const pending = this.pendingSessionDeletions.get(sessionKey);
-		if (pending) return pending;
-		const deletion = this.runSessionDeletion(sessionKey, deleteSessionTree);
-		this.pendingSessionDeletions.set(sessionKey, deletion);
-		void deletion.then(
-			() => this.clearPendingSessionDeletion(sessionKey, deletion),
-			() => this.clearPendingSessionDeletion(sessionKey, deletion),
+		return deduplicateSessionDeletion(this.pendingSessionDeletions, sessionKey, () =>
+			this.runSessionDeletion(sessionKey, deleteSessionTree),
 		);
-		return deletion;
 	}
 
 	private async runSessionDeletion(sessionKey: string, deleteSessionTree: () => Promise<void>): Promise<void> {
@@ -366,12 +365,6 @@ class AgentSubmissionStoreImpl implements AgentSubmissionStore {
 			);
 			this.sql.exec('DELETE FROM flue_agent_session_deletions WHERE session_key = ?', sessionKey);
 		});
-	}
-
-	private clearPendingSessionDeletion(sessionKey: string, deletion: Promise<void>): void {
-		if (this.pendingSessionDeletions.get(sessionKey) === deletion) {
-			this.pendingSessionDeletions.delete(sessionKey);
-		}
 	}
 
 	async claimSubmission(
@@ -626,7 +619,12 @@ function parseSubmission(row: SqlRow): AgentSubmission {
 		throw new Error('[flue] Persisted agent submission row is malformed.');
 	}
 	const input = JSON.parse(row.payload) as unknown;
-	if (!isSubmissionPayload(input, row)) {
+	if (!isSubmissionPayload(input, {
+		kind: row.kind as string,
+		submissionId: row.submission_id as string,
+		sessionKey: row.session_key as string,
+		acceptedAt: row.accepted_at as number,
+	})) {
 		throw new Error('[flue] Persisted agent submission payload is malformed.');
 	}
 	return {
@@ -648,54 +646,6 @@ function parseSubmission(row: SqlRow): AgentSubmission {
 		maxRetry: typeof row.max_retry === 'number' ? row.max_retry : DURABILITY_DEFAULT_MAX_RETRY,
 		timeoutAt: typeof row.timeout_at === 'number' ? row.timeout_at : 0,
 	};
-}
-
-function isSubmissionPayload(input: unknown, row: SqlRow): input is AgentSubmissionInput {
-	if (!input || typeof input !== 'object') return false;
-	const value = input as Partial<AgentSubmissionInput>;
-	if (value.kind !== row.kind || value.submissionId !== row.submission_id) return false;
-	if (value.kind === 'dispatch') {
-		const dispatch = value as Partial<DispatchAgentSubmissionInput>;
-		return (
-			typeof dispatch.dispatchId === 'string' &&
-			dispatch.dispatchId === value.submissionId &&
-			typeof dispatch.agent === 'string' &&
-			typeof dispatch.id === 'string' &&
-			typeof dispatch.session === 'string' &&
-			createSessionStorageKey(dispatch.id, 'default', dispatch.session) === row.session_key &&
-			typeof dispatch.acceptedAt === 'string' &&
-			Date.parse(dispatch.acceptedAt) === row.accepted_at &&
-			'input' in dispatch &&
-			dispatch.input !== undefined
-		);
-	}
-	const direct = value as Partial<DirectAgentSubmissionInput>;
-	return (
-		typeof direct.agent === 'string' &&
-		typeof direct.id === 'string' &&
-		typeof direct.session === 'string' &&
-		createSessionStorageKey(direct.id, 'default', direct.session) === row.session_key &&
-		typeof direct.acceptedAt === 'string' &&
-		Date.parse(direct.acceptedAt) === row.accepted_at &&
-		isDirectPayload(direct.payload)
-	);
-}
-
-function isDirectPayload(value: unknown): boolean {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-	const payload = value as { message?: unknown; session?: unknown };
-	return (
-		typeof payload.message === 'string' &&
-		(payload.session === undefined || typeof payload.session === 'string')
-	);
-}
-
-function parseAcceptedAt(value: string, label: string): number {
-	const acceptedAt = Date.parse(value);
-	if (!Number.isFinite(acceptedAt)) {
-		throw new Error(`[flue] Internal ${label} received an invalid acceptedAt timestamp.`);
-	}
-	return acceptedAt;
 }
 
 function ensureSessionTable(sql: SqlStorage): void {

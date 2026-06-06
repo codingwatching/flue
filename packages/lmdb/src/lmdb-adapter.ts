@@ -32,8 +32,11 @@ import type { DirectAgentSubmissionInput, DispatchInput, SessionData, SessionSto
 import {
 	createDispatchAgentSubmissionInput,
 	createSessionStorageKey,
+	deduplicateSessionDeletion,
 	DURABILITY_DEFAULT_MAX_RETRY,
 	DURABILITY_DEFAULT_TIMEOUT_MINUTES,
+	isSubmissionPayload,
+	parseAcceptedAt,
 } from '@flue/runtime/internal';
 import type { DispatchAgentSubmissionInput } from '@flue/runtime/internal';
 
@@ -457,15 +460,9 @@ class LmdbSubmissionStore implements AgentSubmissionStore {
 	// ── Deletion ─────────────────────────────────────────────────────────
 
 	deleteSession(sessionKey: string, deleteSessionTree: () => Promise<void>): Promise<void> {
-		const pending = this.pendingSessionDeletions.get(sessionKey);
-		if (pending) return pending;
-		const deletion = this.runSessionDeletion(sessionKey, deleteSessionTree);
-		this.pendingSessionDeletions.set(sessionKey, deletion);
-		void deletion.then(
-			() => this.clearPendingSessionDeletion(sessionKey, deletion),
-			() => this.clearPendingSessionDeletion(sessionKey, deletion),
+		return deduplicateSessionDeletion(this.pendingSessionDeletions, sessionKey, () =>
+			this.runSessionDeletion(sessionKey, deleteSessionTree),
 		);
-		return deletion;
 	}
 
 	// ── Private ──────────────────────────────────────────────────────────
@@ -569,12 +566,6 @@ class LmdbSubmissionStore implements AgentSubmissionStore {
 		});
 	}
 
-	private clearPendingSessionDeletion(sessionKey: string, deletion: Promise<void>): void {
-		if (this.pendingSessionDeletions.get(sessionKey) === deletion) {
-			this.pendingSessionDeletions.delete(sessionKey);
-		}
-	}
-
 	private async failDocById(
 		submissionId: string,
 		status: 'queued' | 'active',
@@ -609,7 +600,12 @@ function docToSubmission(doc: SubmissionDoc): AgentSubmission {
 	}
 
 	const input = JSON.parse(doc.payload) as unknown;
-	if (!isSubmissionPayload(input, doc)) {
+	if (!isSubmissionPayload(input, {
+		kind: doc.kind,
+		submissionId: doc.submissionId,
+		sessionKey: doc.sessionKey,
+		acceptedAt: doc.acceptedAt,
+	})) {
 		throw new Error('[flue] Persisted agent submission payload is malformed.');
 	}
 
@@ -651,61 +647,4 @@ function docToJournal(doc: JournalDoc): AgentTurnJournal {
 	};
 }
 
-// ─── Payload validation ─────────────────────────────────────────────────────
 
-function isSubmissionPayload(
-	input: unknown,
-	doc: SubmissionDoc,
-): input is AgentSubmission['input'] {
-	if (!input || typeof input !== 'object') return false;
-	const value = input as Record<string, unknown>;
-	if (value.kind !== doc.kind || value.submissionId !== doc.submissionId) return false;
-	if (value.kind === 'dispatch') {
-		return (
-			typeof value.dispatchId === 'string' &&
-			value.dispatchId === value.submissionId &&
-			typeof value.agent === 'string' &&
-			typeof value.id === 'string' &&
-			typeof value.session === 'string' &&
-			createSessionStorageKey(
-				value.id as string,
-				'default',
-				value.session as string,
-			) === doc.sessionKey &&
-			typeof value.acceptedAt === 'string' &&
-			Date.parse(value.acceptedAt as string) === doc.acceptedAt &&
-			'input' in value &&
-			value.input !== undefined
-		);
-	}
-	return (
-		typeof value.agent === 'string' &&
-		typeof value.id === 'string' &&
-		typeof value.session === 'string' &&
-		createSessionStorageKey(
-			value.id as string,
-			'default',
-			value.session as string,
-		) === doc.sessionKey &&
-		typeof value.acceptedAt === 'string' &&
-		Date.parse(value.acceptedAt as string) === doc.acceptedAt &&
-		isDirectPayload(value.payload)
-	);
-}
-
-function isDirectPayload(value: unknown): boolean {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-	const payload = value as { message?: unknown; session?: unknown };
-	return (
-		typeof payload.message === 'string' &&
-		(payload.session === undefined || typeof payload.session === 'string')
-	);
-}
-
-function parseAcceptedAt(value: string, label: string): number {
-	const acceptedAt = Date.parse(value);
-	if (!Number.isFinite(acceptedAt)) {
-		throw new Error(`[flue] Internal ${label} received an invalid acceptedAt timestamp.`);
-	}
-	return acceptedAt;
-}
