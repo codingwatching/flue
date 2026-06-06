@@ -123,12 +123,13 @@ async function createDefaultEnv() {
 ${
 			dbEntry
 				? `// Custom persistence from db.ts.
-if (!userPersistenceAdapter || typeof userPersistenceAdapter.createStore !== 'function') {
-  throw new Error('[flue] db.ts must default-export a PersistenceAdapter with a createStore() method.');
+if (!userPersistenceAdapter || typeof userPersistenceAdapter.connect !== 'function') {
+  throw new Error('[flue] db.ts must default-export a PersistenceAdapter with a connect() method.');
 }
 let executionStore;
 try {
-  executionStore = await userPersistenceAdapter.createStore();
+  if (userPersistenceAdapter.migrate) await userPersistenceAdapter.migrate();
+  executionStore = userPersistenceAdapter.connect();
 } catch (error) {
   throw new Error('[flue] Failed to initialize persistence from db.ts: ' + (error instanceof Error ? error.message : error), { cause: error });
 }`

@@ -73,12 +73,24 @@ export interface PostgresOptions {
 export function postgres(urlOrOptions?: string | PostgresOptions): PersistenceAdapter {
 	let runner: PgRunner | undefined;
 
-	return {
-		async createStore() {
-			if (runner) throw new Error('[flue] createStore() was already called on this adapter.');
+	function getRunner(): PgRunner {
+		if (!runner) {
 			const opts = typeof urlOrOptions === 'string' ? { connectionString: urlOrOptions } : (urlOrOptions ?? {});
 			runner = createPgDriverRunner(opts);
-			return createPostgresExecutionStore(runner);
+		}
+		return runner;
+	}
+
+	return {
+		async migrate() {
+			await ensureTables(getRunner());
+		},
+		connect() {
+			const r = getRunner();
+			return {
+				sessions: new PgSessionStore(r),
+				submissions: new PgSubmissionStore(r),
+			};
 		},
 		async close() {
 			await runner?.close();
@@ -94,8 +106,14 @@ export function postgres(urlOrOptions?: string | PostgresOptions): PersistenceAd
 export function postgresFromRunner(runner: PgRunner): PersistenceAdapter {
 	let closed = false;
 	return {
-		async createStore() {
-			return createPostgresExecutionStore(runner);
+		async migrate() {
+			await ensureTables(runner);
+		},
+		connect() {
+			return {
+				sessions: new PgSessionStore(runner),
+				submissions: new PgSubmissionStore(runner),
+			};
 		},
 		async close() {
 			if (closed) return;
@@ -138,16 +156,6 @@ function createPgDriverRunner(opts: PostgresOptions): PgRunner {
 		async close() {
 			await sql.end();
 		},
-	};
-}
-
-// ─── Store construction ─────────────────────────────────────────────────────
-
-async function createPostgresExecutionStore(runner: PgRunner): Promise<AgentExecutionStore> {
-	await ensureTables(runner);
-	return {
-		sessions: new PgSessionStore(runner),
-		submissions: new PgSubmissionStore(runner),
 	};
 }
 

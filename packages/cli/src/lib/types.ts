@@ -50,8 +50,9 @@ export interface BuildContext {
 	/**
 	 * Absolute path to the user's `db.{ts,js,mts,mjs}` entry, if one
 	 * exists in the source root. When set, the generated server entry
-	 * imports the default export (a `PersistenceAdapter`) and calls
-	 * `await adapter.createStore()` to create the agent execution store.
+	 * imports the default export (a `PersistenceAdapter`), calls
+	 * `await adapter.migrate()` to ensure schema, then `adapter.connect()`
+	 * to create the agent execution store.
 	 * When undefined, the generated entry falls back to the platform
 	 * default (Node: in-memory SQLite, Cloudflare: DO SQLite).
 	 *

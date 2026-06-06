@@ -104,8 +104,8 @@ export function lmdb(path: string): PersistenceAdapter {
 	let env: RootDatabase | undefined;
 
 	return {
-		createStore() {
-			if (env) throw new Error('[flue] createStore() was already called on this adapter.');
+		connect() {
+			if (env) throw new Error('[flue] connect() was already called on this adapter.');
 			env = open({ path, compression: false });
 			return createLmdbExecutionStore(env);
 		},

@@ -42,18 +42,29 @@ export function createSqlSessionStore(sql: SqlStorage): SessionStore {
 }
 
 /**
+ * Run idempotent DDL for all agent execution store tables.
+ * Called by `createSqlAgentExecutionStore` (Cloudflare DO path) and
+ * by the `sqlite()` adapter's `migrate()` method (Node).
+ */
+export function ensureSqlAgentExecutionTables(sql: SqlStorage): void {
+	ensureSessionTable(sql);
+	ensureSubmissionTable(sql);
+	ensureTurnJournalTable(sql);
+}
+
+/**
  * Initialize an {@link AgentExecutionStore} from raw SQL primitives.
  * Used by both Cloudflare (DO SQLite) and Node (`node:sqlite`).
+ *
+ * **Does not run DDL.** Call {@link ensureSqlAgentExecutionTables} first
+ * to ensure the schema exists.
  */
 export function createSqlAgentExecutionStoreFromSql(
 	sql: SqlStorage,
 	runTransaction: <T>(closure: () => T) => T,
 ): AgentExecutionStore {
-	const sessions = createSqlSessionStore(sql);
-	ensureSubmissionTable(sql);
-	ensureTurnJournalTable(sql);
 	return {
-		sessions,
+		sessions: new SqlSessionStore(sql),
 		submissions: new AgentSubmissionStoreImpl(sql, runTransaction),
 	};
 }
@@ -73,6 +84,7 @@ export function createSqlAgentExecutionStore(
 		);
 	}
 	try {
+		ensureSqlAgentExecutionTables(sql);
 		const runTransaction = <T>(closure: () => T): T => transactionSync.call(storage, closure) as T;
 		return createSqlAgentExecutionStoreFromSql(sql, runTransaction);
 	} catch (cause) {

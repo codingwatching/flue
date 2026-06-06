@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentExecutionStore } from '../src/agent-execution-store.ts';
 import type { SqlStorage } from '../src/sql-storage.ts';
-import { createSqlAgentExecutionStoreFromSql } from '../src/cloudflare/agent-execution-store.ts';
+import { createSqlAgentExecutionStoreFromSql, ensureSqlAgentExecutionTables } from '../src/cloudflare/agent-execution-store.ts';
 import { createNodeAgentExecutionStore, sqlite } from '../src/node/agent-execution-store.ts';
 import type { SessionData } from '../src/types.ts';
 import { defineStoreContractTests } from '../src/test-utils/define-store-contract-tests.ts';
@@ -49,6 +49,7 @@ function createCloudflareSqlBackend(): AgentExecutionStore {
 			throw error;
 		}
 	};
+	ensureSqlAgentExecutionTables(sql);
 	return createSqlAgentExecutionStoreFromSql(sql, runTransaction);
 }
 
@@ -114,7 +115,8 @@ describe('sqlite() PersistenceAdapter', () => {
 		const dir = createTempDir();
 		const nested = join(dir, 'nested', 'deep', 'flue.db');
 		const adapter = sqlite(nested);
-		adapter.createStore();
+		adapter.migrate?.();
+		adapter.connect();
 		expect(existsSync(join(dir, 'nested', 'deep'))).toBe(true);
 		adapter.close?.();
 	});
@@ -123,7 +125,8 @@ describe('sqlite() PersistenceAdapter', () => {
 		const dir = createTempDir();
 		const dbPath = join(dir, 'wal-test.db');
 		const adapter = sqlite(dbPath);
-		adapter.createStore();
+		adapter.migrate?.();
+		adapter.connect();
 		const db = new DatabaseSync(dbPath);
 		const result = db.prepare('PRAGMA journal_mode').all() as { journal_mode: string }[];
 		expect(result[0]?.journal_mode).toBe('wal');
@@ -131,19 +134,21 @@ describe('sqlite() PersistenceAdapter', () => {
 		adapter.close?.();
 	});
 
-	it('preserves sessions across close() and createStore() cycles', async () => {
+	it('preserves sessions across close() and connect() cycles', async () => {
 		const dir = createTempDir();
 		const dbPath = join(dir, 'restart-test.db');
 		const adapter = sqlite(dbPath);
 
-		const store1 = adapter.createStore() as AgentExecutionStore;
+		adapter.migrate?.();
+		const store1 = adapter.connect() as AgentExecutionStore;
 		await store1.sessions.save('s1', sessionData());
 		await store1.submissions.admitDispatch(dispatchInput());
 		await store1.submissions.claimSubmission(attempt('dispatch-1', 'attempt-1'));
 		await store1.submissions.completeSubmission(attempt('dispatch-1', 'attempt-1'));
 		adapter.close?.();
 
-		const store2 = adapter.createStore() as AgentExecutionStore;
+		adapter.migrate?.();
+		const store2 = adapter.connect() as AgentExecutionStore;
 		expect(await store2.sessions.load('s1')).toEqual(sessionData());
 		const submission = await store2.submissions.getSubmission('dispatch-1');
 		expect(submission).toMatchObject({ status: 'settled', kind: 'dispatch' });
@@ -153,7 +158,8 @@ describe('sqlite() PersistenceAdapter', () => {
 
 	it('returns an in-memory store when no path is provided', async () => {
 		const adapter = sqlite();
-		const store = adapter.createStore() as AgentExecutionStore;
+		adapter.migrate?.();
+		const store = adapter.connect() as AgentExecutionStore;
 		await store.sessions.save('s1', sessionData());
 		expect(await store.sessions.load('s1')).toEqual(sessionData());
 		adapter.close?.();
@@ -169,7 +175,8 @@ describe('sqlite() PersistenceAdapter', () => {
 
 	it('close() is idempotent', () => {
 		const adapter = sqlite();
-		adapter.createStore();
+		adapter.migrate?.();
+		adapter.connect();
 		adapter.close?.();
 		adapter.close?.();
 	});

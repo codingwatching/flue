@@ -48,7 +48,8 @@ defineStoreContractTests('Postgres AgentExecutionStore', {
 	async create() {
 		const runner = createPgliteRunner();
 		const adapter = postgresFromRunner(runner);
-		return adapter.createStore();
+		await adapter.migrate?.();
+		return adapter.connect();
 	},
 });
 
@@ -70,7 +71,8 @@ describe('postgres() PersistenceAdapter', () => {
 	it('creates a store and closes cleanly via postgresFromRunner', async () => {
 		const runner = createPgliteRunner();
 		const adapter = postgresFromRunner(runner);
-		const store = await adapter.createStore();
+		await adapter.migrate?.();
+		const store = adapter.connect();
 		await store.sessions.save('s1', sessionData());
 		expect(await store.sessions.load('s1')).toEqual(sessionData());
 		await adapter.close!();
@@ -79,7 +81,8 @@ describe('postgres() PersistenceAdapter', () => {
 	it('close() is idempotent', async () => {
 		const runner = createPgliteRunner();
 		const adapter = postgresFromRunner(runner);
-		await adapter.createStore();
+		await adapter.migrate?.();
+		adapter.connect();
 		await adapter.close!();
 		await adapter.close!();
 	});

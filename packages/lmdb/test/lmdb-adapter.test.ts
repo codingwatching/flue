@@ -40,7 +40,7 @@ defineStoreContractTests('LMDB AgentExecutionStore', {
 	create() {
 		testDir = createTempDir();
 		const adapter = lmdb(testDir);
-		return adapter.createStore();
+		return adapter.connect();
 	},
 	async cleanup() {
 		if (testDir) {
@@ -53,21 +53,21 @@ defineStoreContractTests('LMDB AgentExecutionStore', {
 // ─── Adapter factory tests ──────────────────────────────────────────────────
 
 describe('lmdb() PersistenceAdapter', () => {
-	it('creates a store and closes cleanly', async () => {
+	it('connects and closes cleanly', async () => {
 		const dir = createTempDir();
 		const adapter = lmdb(dir);
-		const store = await adapter.createStore();
+		const store = adapter.connect();
 		await store.sessions.save('s1', sessionData());
 		expect(await store.sessions.load('s1')).toEqual(sessionData());
 		await adapter.close!();
 		try { rmSync(dir, { recursive: true, force: true }); } catch {}
 	});
 
-	it('rejects double createStore()', async () => {
+	it('rejects double connect()', async () => {
 		const dir = createTempDir();
 		const adapter = lmdb(dir);
-		await adapter.createStore();
-		expect(() => adapter.createStore()).toThrow('createStore() was already called');
+		adapter.connect();
+		expect(() => adapter.connect()).toThrow('connect() was already called');
 		await adapter.close!();
 		try { rmSync(dir, { recursive: true, force: true }); } catch {}
 	});
@@ -75,7 +75,7 @@ describe('lmdb() PersistenceAdapter', () => {
 	it('close() is idempotent', async () => {
 		const dir = createTempDir();
 		const adapter = lmdb(dir);
-		await adapter.createStore();
+		adapter.connect();
 		await adapter.close!();
 		await adapter.close!();
 		try { rmSync(dir, { recursive: true, force: true }); } catch {}

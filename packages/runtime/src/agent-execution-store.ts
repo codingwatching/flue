@@ -143,19 +143,26 @@ export interface AgentExecutionStore {
 // ─── Persistence adapter ────────────────────────────────────────────────────
 
 /**
- * A persistence adapter creates an {@link AgentExecutionStore} backed by a
+ * A persistence adapter provides an {@link AgentExecutionStore} backed by a
  * specific database. Users configure persistence by creating a `db.ts` file
  * in their source root and default-exporting an adapter.
  *
  * Adapter packages export a factory function that returns this interface.
  * The built-in `sqlite()` adapter is available from `@flue/runtime/node`.
  *
- * `db.ts` discovery is wired into the build plugin separately — this
- * interface defines the contract that adapters must satisfy.
+ * Lifecycle: the framework calls `migrate()` (if present) once at startup
+ * to ensure the schema exists, then calls `connect()` to obtain the store.
+ * On shutdown, `close()` is called to release resources.
  */
 export interface PersistenceAdapter {
-	/** Create the execution store. Called once at startup. */
-	createStore(): AgentExecutionStore | Promise<AgentExecutionStore>;
+	/** Open the database connection and return the execution store. */
+	connect(): AgentExecutionStore;
+	/**
+	 * Run idempotent schema setup (CREATE TABLE IF NOT EXISTS, etc.).
+	 * Called once at startup before {@link connect}. Adapters that create
+	 * schema implicitly (e.g. LMDB) may omit this method.
+	 */
+	migrate?(): void | Promise<void>;
 	/** Gracefully release resources (connection pools, file handles). */
 	close?(): void | Promise<void>;
 }

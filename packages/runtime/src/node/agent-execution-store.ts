@@ -11,7 +11,7 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { AgentExecutionStore, PersistenceAdapter } from '../agent-execution-store.ts';
 import type { SqlStorage } from '../sql-storage.ts';
-import { createSqlAgentExecutionStoreFromSql } from '../cloudflare/agent-execution-store.ts';
+import { createSqlAgentExecutionStoreFromSql, ensureSqlAgentExecutionTables } from '../cloudflare/agent-execution-store.ts';
 
 /**
  * Adapt `node:sqlite` {@link DatabaseSync} to the Cloudflare {@link SqlStorage}
@@ -68,8 +68,8 @@ function createNodeTransactionSync(db: DatabaseSync): <T>(closure: () => T) => T
 	};
 }
 
-/** Open a `node:sqlite` database and return the handle + execution store. */
-function openDatabase(path: string): { db: DatabaseSync; store: AgentExecutionStore } {
+/** Open a `node:sqlite` database and return the handle, SQL adapter, and transaction wrapper. */
+function openDatabase(path: string): { db: DatabaseSync; sql: SqlStorage; runTransaction: <T>(closure: () => T) => T } {
 	if (path !== ':memory:') {
 		mkdirSync(dirname(path), { recursive: true });
 	}
@@ -79,7 +79,7 @@ function openDatabase(path: string): { db: DatabaseSync; store: AgentExecutionSt
 	}
 	const sql = createNodeSqlStorage(db);
 	const runTransaction = createNodeTransactionSync(db);
-	return { db, store: createSqlAgentExecutionStoreFromSql(sql, runTransaction) };
+	return { db, sql, runTransaction };
 }
 
 /**
@@ -87,11 +87,16 @@ function openDatabase(path: string): { db: DatabaseSync; store: AgentExecutionSt
  *
  * Uses `:memory:` by default — data is lost on process exit. Pass a file path
  * for local development persistence.
+ *
+ * Runs DDL internally — this is the all-in-one path used by the generated
+ * Node entry when no `db.ts` is present.
  */
 export function createNodeAgentExecutionStore(
 	path: string = ':memory:',
 ): AgentExecutionStore {
-	return openDatabase(path).store;
+	const { sql, runTransaction } = openDatabase(path);
+	ensureSqlAgentExecutionTables(sql);
+	return createSqlAgentExecutionStoreFromSql(sql, runTransaction);
 }
 
 /**
@@ -113,16 +118,24 @@ export function sqlite(path?: string): PersistenceAdapter {
 		throw new Error('[flue] sqlite() requires a non-empty file path, or omit the argument for an in-memory database.');
 	}
 	const resolvedPath = path ?? ':memory:';
-	let db: DatabaseSync | undefined;
+	let state: ReturnType<typeof openDatabase> | undefined;
+
+	function ensureOpen() {
+		if (!state) state = openDatabase(resolvedPath);
+		return state;
+	}
+
 	return {
-		createStore() {
-			const opened = openDatabase(resolvedPath);
-			db = opened.db;
-			return opened.store;
+		migrate() {
+			ensureSqlAgentExecutionTables(ensureOpen().sql);
+		},
+		connect() {
+			const { sql, runTransaction } = ensureOpen();
+			return createSqlAgentExecutionStoreFromSql(sql, runTransaction);
 		},
 		close() {
-			db?.close();
-			db = undefined;
+			state?.db.close();
+			state = undefined;
 		},
 	};
 }
