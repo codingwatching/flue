@@ -85,6 +85,7 @@ export type {
 	SessionData,
 	SessionEnv,
 	SessionStore,
+	SignalMessage,
 	SessionToolFactory,
 	SessionToolFactoryOptions,
 	ShellOptions,

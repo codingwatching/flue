@@ -94,6 +94,7 @@ export function createNodeAgentCoordinator(options: {
 					submission.inputAppliedAt !== undefined && submission.timeoutAt > 0
 						? submission.timeoutAt
 						: undefined,
+				submissionAttempt: attempt,
 				journal: createSubmissionJournalCallbacks(submissions, submission, attempt),
 			})(ctx);
 			await submissions.completeSubmission(attempt);

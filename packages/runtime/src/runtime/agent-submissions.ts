@@ -48,9 +48,11 @@ interface ProcessAgentSubmissionJournalState {
 	readonly operationId: string;
 	readonly turnId: string;
 	readonly checkpointLeafId?: string;
+	readonly streamKey?: string;
 }
 
 export interface ProcessAgentSubmissionOptions {
+	submissionAttempt?: SubmissionAttemptRef;
 	onInputApplied?: (durability: SubmissionDurability) => Promise<void> | void;
 	/** Claim timestamp used as the base for a newly resolved timeout. */
 	startedAt?: number;
@@ -85,6 +87,7 @@ interface AgentSubmissionSession {
 		input: AgentSubmissionInput,
 		toolRequest: AgentSubmissionToolRequest,
 	): Promise<string | undefined>;
+	recoverInterruptedStream?(streamKey: string): Promise<boolean>;
 	recordSubmissionTerminal?(input: AgentSubmissionInterruption): Promise<void>;
 }
 
@@ -153,6 +156,20 @@ export function createAgentSubmissionRepairHandler(
 			throw new Error('[flue] Internal session does not support interrupted-tool repair.');
 		}
 		return session.repairInterruptedToolCalls(input, toolRequest);
+	};
+}
+
+export function createAgentSubmissionStreamRecoveryHandler(
+	agent: CreatedAgent,
+	input: AgentSubmissionInput,
+	streamKey: string,
+): AgentSubmissionHandler {
+	return async (ctx) => {
+		const session = await openAgentSubmissionSession(ctx, agent, input);
+		if (typeof session.recoverInterruptedStream !== 'function') {
+			throw new Error('[flue] Internal session does not support stream recovery.');
+		}
+		return session.recoverInterruptedStream(streamKey);
 	};
 }
 
@@ -238,7 +255,10 @@ export function createAgentSubmissionObserverRegistry(): AgentSubmissionObserver
  * journal phase lifecycle; this factory eliminates the duplication.
  */
 export function createSubmissionJournalCallbacks(
-	submissions: Pick<AgentSubmissionStore, 'beginTurnJournal' | 'updateTurnJournalPhase' | 'commitTurnJournal'>,
+	submissions: Pick<
+		AgentSubmissionStore,
+		'beginTurnJournal' | 'updateTurnJournalPhase' | 'commitTurnJournal'
+	>,
 	submission: { submissionId: string; sessionKey: string; kind: 'dispatch' | 'direct' },
 	attempt: SubmissionAttemptRef,
 ): NonNullable<ProcessAgentSubmissionOptions['journal']> {
@@ -262,6 +282,7 @@ export function createSubmissionJournalCallbacks(
 		providerStarted: async (state) => {
 			await submissions.updateTurnJournalPhase(attempt, 'provider_started', {
 				checkpointLeafId: state.checkpointLeafId,
+				streamKey: state.streamKey,
 			});
 		},
 		toolRequestRecorded: async (state) => {
@@ -337,6 +358,26 @@ export async function reconcileInterruptedSubmission(
 
 	// Check turn journal for pre-commit interruption that can be retried.
 	const journal = await submissions.getTurnJournal(submission.submissionId);
+	if (
+		state !== 'completed' &&
+		journal?.phase === 'provider_started' &&
+		journal.committed === false &&
+		journal.streamKey &&
+		journal.streamConsumedAt === undefined
+	) {
+		const recoveryCtx = createContext(readPayload, dispatchId);
+		const recovered = (await createAgentSubmissionStreamRecoveryHandler(
+			agent,
+			input,
+			journal.streamKey,
+		)(recoveryCtx)) as boolean;
+		if (recovered) {
+			await submissions.markStreamConsumed(attempt, journal.streamKey);
+			await submissions.deleteStreamChunkSegments(journal.streamKey);
+			const replacement = await submissions.replaceTurnJournalAttempt(attempt, crypto.randomUUID());
+			if (replacement) return { replacement, failedError: null };
+		}
+	}
 	if (
 		journal &&
 		(journal.phase === 'before_provider' || journal.phase === 'provider_started') &&

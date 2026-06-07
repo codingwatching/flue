@@ -557,6 +557,7 @@ class CloudflareAgentCoordinator {
 						submission.inputAppliedAt !== undefined && submission.timeoutAt > 0
 							? submission.timeoutAt
 							: undefined,
+					submissionAttempt: attempt,
 					journal: createSubmissionJournalCallbacks(this.submissions, submission, attempt),
 				})(operationCtx),
 			);

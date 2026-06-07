@@ -63,6 +63,7 @@ import type {
 	ProcessAgentSubmissionOptions,
 } from './runtime/agent-submissions.ts';
 import { agentSubmissionDispatchInput } from './runtime/agent-submissions.ts';
+import { reconstructInterruptedStream, StreamChunkWriter } from './runtime/stream-chunks.ts';
 import type { DispatchInput } from './runtime/dispatch-queue.ts';
 import { generateOperationId, generateTurnId } from './runtime/ids.ts';
 import { getProviderConfiguration, getRegisteredApiKey } from './runtime/providers.ts';
@@ -91,6 +92,7 @@ import type {
 	SessionEnv,
 	SessionStore,
 	SessionToolFactory,
+	SignalMessage,
 	ShellOptions,
 	ShellResult,
 	SkillOptions,
@@ -123,7 +125,13 @@ type TurnAssistantContent = Extract<TurnInputMessage, { role: 'assistant' }>['co
 type TurnToolResultContent = Extract<TurnInputMessage, { role: 'toolResult' }>['content'][number];
 type TurnContent = TurnUserContent | TurnAssistantContent | TurnToolResultContent;
 
-function toTurnMessage(message: Message): TurnInputMessage {
+function toTurnMessage(message: AgentMessage): TurnInputMessage {
+	if (message.role === 'signal') {
+		return {
+			role: 'user',
+			content: renderSignalMessage(message),
+		};
+	}
 	if (message.role === 'user') {
 		return {
 			role: 'user',
@@ -139,13 +147,33 @@ function toTurnMessage(message: Message): TurnInputMessage {
 			content: message.content.map(toTurnContent) as TurnAssistantContent[],
 		};
 	}
-	return {
-		role: 'toolResult',
-		toolCallId: message.toolCallId,
-		toolName: message.toolName,
-		content: message.content.map(toTurnContent) as TurnToolResultContent[],
-		isError: message.isError,
-	};
+	if (message.role === 'toolResult') {
+		return {
+			role: 'toolResult',
+			toolCallId: message.toolCallId,
+			toolName: message.toolName,
+			content: message.content.map(toTurnContent) as TurnToolResultContent[],
+			isError: message.isError,
+		};
+	}
+	throw new Error(`[flue] Unsupported message role in turn context: ${message.role}`);
+}
+
+function renderSignalMessage(message: SignalMessage): string {
+	const tagName = message.tagName ?? 'signal';
+	const attributes = [
+		['type', message.type],
+		...Object.entries(message.attributes ?? {}),
+	].map(([name, value]) => ` ${escapeXmlAttribute(name ?? '')}="${escapeXmlAttribute(value ?? '')}"`).join('');
+	return `<${tagName}${attributes}>\n${escapeXmlText(message.content)}\n</${tagName}>`;
+}
+
+function escapeXmlText(value: string): string {
+	return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function escapeXmlAttribute(value: string): string {
+	return escapeXmlText(value).replaceAll('"', '&quot;');
 }
 
 function toTurnContent(block: ProviderContentBlock): TurnContent {
@@ -502,10 +530,30 @@ function pathToContextEntries(path: SessionEntry[]): ContextEntry[] {
 	while (index < path.length) {
 		const entry = path[index];
 		if (entry?.type === 'message') {
+			if (entry.message.role === 'signal') {
+				context.push({
+					message: createUserContextMessage(renderSignalMessage(entry.message), entry.timestamp),
+					entry,
+				});
+				index += 1;
+				continue;
+			}
 			if (entry.message.role === 'assistant') {
 				if (entry.message.stopReason === 'error' || entry.message.stopReason === 'aborted') {
-					index += 1;
-					continue;
+					const nextEntry = path[index + 1];
+					const nextNextEntry = path[index + 2];
+					const isResumablePartial =
+						entry.message.stopReason === 'aborted' &&
+						nextEntry?.type === 'message' &&
+						nextEntry.message.role === 'signal' &&
+						nextEntry.message.type === 'stream_interrupted' &&
+						nextNextEntry?.type === 'message' &&
+						nextNextEntry.message.role === 'signal' &&
+						nextNextEntry.message.type === 'stream_continued';
+					if (!isResumablePartial) {
+						index += 1;
+						continue;
+					}
 				}
 				const toolCalls = entry.message.content.filter((content) => content.type === 'toolCall');
 				if (toolCalls.length > 0) {
@@ -711,16 +759,27 @@ export class Session implements FlueSession {
 	private activeJournalCallbacks: ProcessAgentSubmissionOptions['journal'] | undefined;
 	private activeTimeoutAt: number | undefined;
 	private activeTurnCanCommitJournal = false;
+	private activeStreamChunkWriter: StreamChunkWriter | undefined;
+	private activeSubmissionId: string | undefined;
+	private activeSubmissionAttemptId: string | undefined;
 
 	private emitTurnRequestAndStream: StreamFn = async (model, context, options) => {
 		if (this.activeTurnId === undefined) this.activeTurnId = generateTurnId();
 		const turnId = this.activeTurnId;
+		const streamKey =
+			this.activeSubmissionId && this.activeSubmissionAttemptId
+				? `${this.activeSubmissionId}:${turnId}:${this.activeSubmissionAttemptId}`
+				: undefined;
 		const state = {
 			operationId: this.activeOperationId ?? generateOperationId(),
 			turnId,
 			checkpointLeafId: this.history.getLeafId() ?? undefined,
+			streamKey,
 		};
 		await this.activeJournalCallbacks?.beforeProvider?.(state);
+		if (streamKey && this.submissionStore) {
+			this.activeStreamChunkWriter = new StreamChunkWriter(this.submissionStore, streamKey);
+		}
 		this.emitTurnRequest(turnId, 'agent', model, context, options?.reasoning);
 		await this.activeJournalCallbacks?.providerStarted?.(state);
 		return streamSimple(model, context, options);
@@ -819,6 +878,7 @@ export class Session implements FlueSession {
 					this.emit({ type: 'message_start', message: event.message });
 					break;
 				case 'message_update': {
+					this.activeStreamChunkWriter?.write(event.assistantMessageEvent);
 					this.emit({
 						type: 'message_update',
 						message: event.message,
@@ -896,6 +956,7 @@ export class Session implements FlueSession {
 					break;
 				case 'turn_end': {
 					const turnId = this.activeTurnId ?? generateTurnId();
+					await this.activeStreamChunkWriter?.flush();
 					this.activeTurnCanCommitJournal = true;
 					await this.checkpointHarnessMessages();
 					this.emit({
@@ -926,13 +987,18 @@ export class Session implements FlueSession {
 					});
 					this.turnStartTime = undefined;
 					this.activeTurnId = undefined;
+					await this.activeStreamChunkWriter?.close();
+					this.activeStreamChunkWriter = undefined;
 					break;
 				}
 				case 'agent_end':
+					await this.activeStreamChunkWriter?.flush();
 					await this.checkpointHarnessMessages();
 					this.emit({ type: 'agent_end', messages: event.messages });
 					this.turnStartTime = undefined;
 					this.activeTurnId = undefined;
+					await this.activeStreamChunkWriter?.close();
+					this.activeStreamChunkWriter = undefined;
 					break;
 			}
 		});
@@ -1093,6 +1159,27 @@ export class Session implements FlueSession {
 		this.rebuildHarnessContext();
 		await this.save();
 		return this.history.getLeafId() ?? undefined;
+	}
+
+	async recoverInterruptedStream(streamKey: string): Promise<boolean> {
+		if (!this.submissionStore) return false;
+		const segments = await this.submissionStore.getStreamChunkSegments(streamKey);
+		const recovered = reconstructInterruptedStream(segments, streamKey);
+		if (!recovered) return false;
+		const alreadyRecovered = this.history.getActivePath().some(
+			(entry) =>
+				entry.type === 'message' &&
+				entry.message.role === 'signal' &&
+				entry.message.type === 'stream_continued' &&
+				entry.message.attributes?.streamKey === streamKey,
+		);
+		if (alreadyRecovered) return true;
+		this.history.appendMessage(recovered.partial, 'retry');
+		this.history.appendMessage(recovered.interrupted, 'retry');
+		this.history.appendMessage(recovered.continued, 'retry');
+		this.rebuildHarnessContext();
+		await this.save();
+		return true;
 	}
 
 	async recordSubmissionTerminal(input: AgentSubmissionInterruption): Promise<void> {
@@ -1930,6 +2017,9 @@ export class Session implements FlueSession {
 					turnId: this.activeTurnId ?? generateTurnId(),
 					checkpointLeafId: this.history.getLeafId() ?? '',
 				});
+				if (this.activeStreamChunkWriter) {
+					await this.submissionStore?.deleteStreamChunkSegments(this.activeStreamChunkWriter.streamKey);
+				}
 			} else {
 				await this.activeJournalCallbacks?.committed?.({
 					operationId: this.activeOperationId ?? generateOperationId(),
@@ -1937,6 +2027,9 @@ export class Session implements FlueSession {
 					checkpointLeafId: this.history.getLeafId() ?? undefined,
 					committedLeafId: this.history.getLeafId() ?? '',
 				});
+				if (this.activeStreamChunkWriter) {
+					await this.submissionStore?.deleteStreamChunkSegments(this.activeStreamChunkWriter.streamKey);
+				}
 			}
 			this.activeTurnCanCommitJournal = false;
 		}
@@ -1991,9 +2084,10 @@ export class Session implements FlueSession {
 				await start();
 				await this.harness.waitForIdle();
 				await this.checkpointHarnessMessages();
-			} catch (error) {
-				this.rebuildHarnessContext();
-				throw error;
+		} catch (error) {
+			await this.activeStreamChunkWriter?.flush();
+			this.rebuildHarnessContext();
+			throw error;
 			} finally {
 				this.activeCheckpointSource = undefined;
 			}
@@ -2306,6 +2400,17 @@ export class Session implements FlueSession {
 		) {
 			return 'continuable';
 		}
+		if (
+			assistant?.stopReason === 'aborted' &&
+			following.some(
+				(entry) =>
+					entry.type === 'message' &&
+					entry.message.role === 'signal' &&
+					entry.message.type === 'stream_continued',
+			)
+		) {
+			return 'continuable';
+		}
 		return 'uncertain';
 	}
 
@@ -2328,6 +2433,7 @@ export class Session implements FlueSession {
 			persistenceError: '[flue] Failed to persist dispatched input.',
 			recoveryError: '[flue] Cannot recover dispatched input after the session has advanced.',
 			onInputApplied: options?.onInputApplied,
+			submissionAttempt: options?.submissionAttempt,
 			journal: options?.journal,
 			startedAt: options?.startedAt,
 			timeoutAt: options?.timeoutAt,
@@ -2354,6 +2460,7 @@ export class Session implements FlueSession {
 			persistenceError: '[flue] Failed to persist direct input.',
 			recoveryError: '[flue] Cannot recover direct input after the session has advanced.',
 			onInputApplied: options?.onInputApplied,
+			submissionAttempt: options?.submissionAttempt,
 			journal: options?.journal,
 			startedAt: options?.startedAt,
 			timeoutAt: options?.timeoutAt,
@@ -2383,6 +2490,7 @@ export class Session implements FlueSession {
 		persistenceError: string;
 		recoveryError: string;
 		onInputApplied?: (durability: SubmissionDurability) => Promise<void> | void;
+		submissionAttempt?: import('./agent-execution-store.ts').SubmissionAttemptRef;
 		signal: AbortSignal;
 	}): Promise<PromptResponse> {
 		return this.withCallOverrides(
@@ -2394,6 +2502,8 @@ export class Session implements FlueSession {
 			},
 			async ({ resolvedModel }) => {
 				this.activeJournalCallbacks = options.journal;
+				this.activeSubmissionId = options.submissionAttempt?.submissionId;
+				this.activeSubmissionAttemptId = options.submissionAttempt?.attemptId;
 				const durability = this.resolveSubmissionDurability(options.startedAt, options.timeoutAt);
 				this.activeTimeoutAt = durability.timeoutAt;
 				try {
@@ -2418,10 +2528,19 @@ export class Session implements FlueSession {
 					const assistant = persistedAssistant?.message as AssistantMessage | undefined;
 					const model = this.harness.state.model;
 					const overflow = assistant ? isContextOverflow(assistant, model.contextWindow ?? 0) : false;
+					const streamContinuation =
+						assistant?.stopReason === 'aborted' &&
+						following.some(
+							(entry) =>
+								entry.type === 'message' &&
+								entry.message.role === 'signal' &&
+								entry.message.type === 'stream_continued',
+						);
 					if (
 						!assistant ||
 						overflow ||
 						isRetryableModelError(assistant) ||
+						streamContinuation ||
 						(assistant.stopReason === 'toolUse' &&
 							following.some((entry) => entry.type === 'message' && entry.message.role === 'toolResult'))
 					) {
@@ -2465,6 +2584,8 @@ export class Session implements FlueSession {
 					};
 				} finally {
 					this.activeJournalCallbacks = undefined;
+					this.activeSubmissionId = undefined;
+					this.activeSubmissionAttemptId = undefined;
 					this.activeTimeoutAt = undefined;
 				}
 			},

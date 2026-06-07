@@ -208,8 +208,20 @@ async function ensureTables(runner: PgRunner): Promise<void> {
 				updated_at BIGINT NOT NULL,
 				checkpoint_leaf_id TEXT,
 				tool_request_json TEXT,
+				stream_key TEXT,
+				stream_consumed_at BIGINT,
 				committed INTEGER NOT NULL DEFAULT 0,
 				committed_leaf_id TEXT
+			)
+		`);
+
+		await tx.query(`
+			CREATE TABLE IF NOT EXISTS flue_agent_stream_chunks (
+				stream_key TEXT NOT NULL,
+				segment_index INTEGER NOT NULL,
+				body TEXT NOT NULL,
+				created_at BIGINT NOT NULL,
+				PRIMARY KEY (stream_key, segment_index)
 			)
 		`);
 
@@ -297,7 +309,7 @@ class PgSubmissionStore implements AgentSubmissionStore {
 		const rows = await this.runner.query(
 			`SELECT submission_id, session_key, kind, attempt_id, operation_id, turn_id,
 			        phase, revision, created_at, updated_at, checkpoint_leaf_id,
-			        tool_request_json, committed, committed_leaf_id
+			        tool_request_json, stream_key, stream_consumed_at, committed, committed_leaf_id
 			 FROM flue_agent_turn_journals
 			 WHERE submission_id = $1
 			 LIMIT 1`,
@@ -349,8 +361,8 @@ class PgSubmissionStore implements AgentSubmissionStore {
 			`INSERT INTO flue_agent_turn_journals
 			 (submission_id, session_key, kind, attempt_id, operation_id, turn_id,
 			  phase, revision, created_at, updated_at, checkpoint_leaf_id,
-			  tool_request_json, committed, committed_leaf_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, 0, NULL)
+			  tool_request_json, stream_key, stream_consumed_at, committed, committed_leaf_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, NULL, NULL, 0, NULL)
 			 ON CONFLICT (submission_id) DO UPDATE SET
 			   attempt_id = EXCLUDED.attempt_id,
 			   operation_id = EXCLUDED.operation_id,
@@ -360,6 +372,8 @@ class PgSubmissionStore implements AgentSubmissionStore {
 			   updated_at = EXCLUDED.updated_at,
 			   checkpoint_leaf_id = EXCLUDED.checkpoint_leaf_id,
 			   tool_request_json = EXCLUDED.tool_request_json,
+			   stream_key = NULL,
+			   stream_consumed_at = NULL,
 			   committed = 0,
 			   committed_leaf_id = NULL
 			 RETURNING submission_id`,
@@ -375,20 +389,22 @@ class PgSubmissionStore implements AgentSubmissionStore {
 	async updateTurnJournalPhase(
 		attempt: SubmissionAttemptRef,
 		phase: AgentTurnJournalPhase,
-		options: { checkpointLeafId?: string; toolRequest?: unknown } = {},
+		options: { checkpointLeafId?: string; toolRequest?: unknown; streamKey?: string } = {},
 	): Promise<boolean> {
 		const now = Date.now();
 		const rows = await this.runner.query(
 			`UPDATE flue_agent_turn_journals
 			 SET phase = $1, revision = revision + 1, updated_at = $2,
 			     checkpoint_leaf_id = COALESCE($3, checkpoint_leaf_id),
-			     tool_request_json = COALESCE($4, tool_request_json)
-			 WHERE submission_id = $5 AND attempt_id = $6 AND committed = 0
+			     tool_request_json = COALESCE($4, tool_request_json),
+			     stream_key = COALESCE($5, stream_key)
+			 WHERE submission_id = $6 AND attempt_id = $7 AND committed = 0
 			 RETURNING submission_id`,
 			[
 				phase, now,
 				options.checkpointLeafId ?? null,
 				options.toolRequest === undefined ? null : JSON.stringify(options.toolRequest),
+				options.streamKey ?? null,
 				attempt.submissionId, attempt.attemptId,
 			],
 		);
@@ -406,6 +422,45 @@ class PgSubmissionStore implements AgentSubmissionStore {
 			[now, committedLeafId, attempt.submissionId, attempt.attemptId],
 		);
 		return rows.length > 0;
+	}
+
+	async markStreamConsumed(attempt: SubmissionAttemptRef, streamKey: string): Promise<boolean> {
+		const now = Date.now();
+		const rows = await this.runner.query(
+			`UPDATE flue_agent_turn_journals
+			 SET revision = revision + 1, updated_at = $1, stream_consumed_at = $2
+			 WHERE submission_id = $3 AND attempt_id = $4 AND committed = 0
+			   AND stream_key = $5 AND stream_consumed_at IS NULL
+			 RETURNING submission_id`,
+			[now, now, attempt.submissionId, attempt.attemptId, streamKey],
+		);
+		return rows.length > 0;
+	}
+
+	async appendStreamChunkSegment(streamKey: string, segmentIndex: number, body: string): Promise<boolean> {
+		const rows = await this.runner.query(
+			`INSERT INTO flue_agent_stream_chunks (stream_key, segment_index, body, created_at)
+			 VALUES ($1, $2, $3, $4)
+			 ON CONFLICT (stream_key, segment_index) DO NOTHING
+			 RETURNING stream_key`,
+			[streamKey, segmentIndex, body, Date.now()],
+		);
+		return rows.length > 0;
+	}
+
+	async getStreamChunkSegments(streamKey: string): Promise<Array<{ segmentIndex: number; body: string }>> {
+		const rows = await this.runner.query(
+			`SELECT segment_index, body
+			 FROM flue_agent_stream_chunks
+			 WHERE stream_key = $1
+			 ORDER BY segment_index ASC`,
+			[streamKey],
+		);
+		return rows.map((row) => ({ segmentIndex: Number(row.segment_index), body: String(row.body) }));
+	}
+
+	async deleteStreamChunkSegments(streamKey: string): Promise<void> {
+		await this.runner.query('DELETE FROM flue_agent_stream_chunks WHERE stream_key = $1', [streamKey]);
 	}
 
 	async replaceTurnJournalAttempt(
@@ -800,6 +855,8 @@ function parseTurnJournal(row: SqlRow): AgentTurnJournal {
 		updatedAt,
 		...(row.checkpoint_leaf_id != null ? { checkpointLeafId: String(row.checkpoint_leaf_id) } : {}),
 		...(typeof row.tool_request_json === 'string' ? { toolRequest: JSON.parse(row.tool_request_json) as unknown } : {}),
+		...(typeof row.stream_key === 'string' ? { streamKey: row.stream_key } : {}),
+		...(row.stream_consumed_at != null ? { streamConsumedAt: Number(row.stream_consumed_at) } : {}),
 		committed: committed === 1,
 		...(row.committed_leaf_id != null ? { committedLeafId: String(row.committed_leaf_id) } : {}),
 	};

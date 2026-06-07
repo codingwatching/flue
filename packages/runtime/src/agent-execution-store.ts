@@ -83,6 +83,8 @@ export interface AgentTurnJournal {
 	readonly updatedAt: number;
 	readonly checkpointLeafId?: string;
 	readonly toolRequest?: unknown;
+	readonly streamKey?: string;
+	readonly streamConsumedAt?: number;
 	readonly committed: boolean;
 	readonly committedLeafId?: string;
 }
@@ -117,10 +119,17 @@ export interface AgentSubmissionStore {
 		options?: {
 			checkpointLeafId?: string;
 			toolRequest?: unknown;
+			streamKey?: string;
 		},
 	): Promise<boolean>;
 	commitTurnJournal(attempt: SubmissionAttemptRef, committedLeafId: string): Promise<boolean>;
+	markStreamConsumed(attempt: SubmissionAttemptRef, streamKey: string): Promise<boolean>;
 	replaceTurnJournalAttempt(attempt: SubmissionAttemptRef, nextAttemptId: string): Promise<AgentSubmission | null>;
+
+	// Stream chunks
+	appendStreamChunkSegment(streamKey: string, segmentIndex: number, body: string): Promise<boolean>;
+	getStreamChunkSegments(streamKey: string): Promise<Array<{ segmentIndex: number; body: string }>>;
+	deleteStreamChunkSegments(streamKey: string): Promise<void>;
 
 	// Admission
 	admitDispatch(input: DispatchInput): Promise<AgentDispatchAdmission>;

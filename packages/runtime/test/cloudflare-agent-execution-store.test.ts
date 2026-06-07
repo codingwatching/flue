@@ -145,6 +145,8 @@ describe('createSqlAgentExecutionStore()', () => {
 			{ name: 'updated_at' },
 			{ name: 'checkpoint_leaf_id' },
 			{ name: 'tool_request_json' },
+			{ name: 'stream_key' },
+			{ name: 'stream_consumed_at' },
 			{ name: 'committed' },
 			{ name: 'committed_leaf_id' },
 		]);
@@ -155,6 +157,7 @@ describe('createSqlAgentExecutionStore()', () => {
 		).toEqual([
 			{ name: 'flue_agent_dispatch_receipts' },
 			{ name: 'flue_agent_session_deletions' },
+			{ name: 'flue_agent_stream_chunks' },
 			{ name: 'flue_agent_submissions' },
 			{ name: 'flue_agent_turn_journals' },
 			{ name: 'flue_sessions' },

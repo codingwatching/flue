@@ -1,5 +1,21 @@
 import type { AgentMessage, AgentTool, ThinkingLevel } from '@earendil-works/pi-agent-core';
 import type { ImageContent, Model, TSchema } from '@earendil-works/pi-ai';
+
+export interface SignalMessage {
+	role: 'signal';
+	type: string;
+	tagName?: string;
+	content: string;
+	attributes?: Record<string, string>;
+	data?: Record<string, unknown>;
+	timestamp: number;
+}
+
+declare module '@earendil-works/pi-agent-core' {
+	interface CustomAgentMessages {
+		signal: SignalMessage;
+	}
+}
 import type { MiddlewareHandler } from 'hono';
 import type * as v from 'valibot';
 
