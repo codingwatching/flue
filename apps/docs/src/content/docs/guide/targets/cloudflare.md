@@ -41,9 +41,13 @@ Flue generates the Durable Object classes and bindings, but your `wrangler.jsonc
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["FlueRegistry", "FlueSupportChatAgent", "FlueTranslateWorkflow"],
-    },
-  ],
+      "new_sqlite_classes": [
+        "FlueRegistry",
+        "FlueSupportChatAgent",
+        "FlueTranslateWorkflow"
+      ]
+    }
+  ]
 }
 ```
 
@@ -57,8 +61,8 @@ Cloudflare requires an ordered migration history that accounts for every Durable
 {
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["FlueRegistry", "FlueSupportChatAgent"] },
-    { "tag": "v2", "new_sqlite_classes": ["FlueTranslateWorkflow"] },
-  ],
+    { "tag": "v2", "new_sqlite_classes": ["FlueTranslateWorkflow"] }
+  ]
 }
 ```
 
@@ -69,12 +73,9 @@ For example, if you remove an agent or workflow that was previously deployed, ap
 ```jsonc
 {
   "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": ["FlueRegistry", "FlueSupportChatAgent", "FlueTranslateWorkflow"],
-    },
-    { "tag": "v2", "deleted_classes": ["FlueSupportChatAgent"] },
-  ],
+    { "tag": "v1", "new_sqlite_classes": ["FlueRegistry", "FlueSupportChatAgent", "FlueTranslateWorkflow"] },
+    { "tag": "v2", "deleted_classes": ["FlueSupportChatAgent"] }
+  ]
 }
 ```
 
@@ -84,11 +85,8 @@ Similarly, use `renamed_classes` when a deployed class changes its name, such as
 {
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["FlueRegistry", "FlueSupportChatAgent"] },
-    {
-      "tag": "v2",
-      "renamed_classes": [{ "from": "FlueSupportChatAgent", "to": "FlueSupportAssistantAgent" }],
-    },
-  ],
+    { "tag": "v2", "renamed_classes": [{ "from": "FlueSupportChatAgent", "to": "FlueSupportAssistantAgent" }] }
+  ]
 }
 ```
 
@@ -196,7 +194,10 @@ export const cloudflare = extend({
 ```ts
 export const cloudflare = extend({
   wrap: (Final) =>
-    Sentry.instrumentDurableObjectWithSentry((env) => ({ dsn: env.SENTRY_DSN }), Final),
+    Sentry.instrumentDurableObjectWithSentry(
+      (env) => ({ dsn: env.SENTRY_DSN }),
+      Final,
+    ),
 });
 ```
 

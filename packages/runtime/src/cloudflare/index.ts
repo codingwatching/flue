@@ -24,8 +24,5 @@ export type {
 	CloudflareWorkflowWebSocketOptions,
 } from './websocket.ts';
 
-export {
-	connectCloudflareWorkflowWebSocket,
-	messageCloudflareWorkflowWebSocket,
-} from './websocket.ts';
+export { connectCloudflareWorkflowWebSocket, messageCloudflareWorkflowWebSocket } from './websocket.ts';
 export { getCloudflareAIBindingApiProvider } from './workers-ai-provider.ts';

@@ -22,7 +22,12 @@ const AGENT_PROFILE_FIELDS = new Set([
 	'durability',
 ]);
 
-const AGENT_RUNTIME_FIELDS = new Set([...AGENT_PROFILE_FIELDS, 'profile', 'cwd', 'sandbox']);
+const AGENT_RUNTIME_FIELDS = new Set([
+	...AGENT_PROFILE_FIELDS,
+	'profile',
+	'cwd',
+	'sandbox',
+]);
 
 const VALID_THINKING_LEVELS = {
 	off: true,
