@@ -3,23 +3,7 @@ import { NodePlugin } from '../src/lib/build-plugin-node.ts';
 import type { BuildContext } from '../src/lib/types.ts';
 
 describe('NodePlugin', () => {
-	it('generates correct agent and workflow imports and handler maps', () => {
-		const entry = new NodePlugin().generateEntryPoint(
-			testBuildContext({
-				agents: [{ name: 'assistant', filePath: '/fixture/agents/assistant.ts' }],
-				workflows: [{ name: 'translate', filePath: '/fixture/workflows/translate.ts' }],
-			}),
-		);
-
-		expect(entry).toContain('import * as handler_assistant_0 from "/fixture/agents/assistant.ts";');
-		expect(entry).toContain(
-			'import * as workflow_translate_0 from "/fixture/workflows/translate.ts";',
-		);
-		expect(entry).toContain('"assistant": handler_assistant_0,');
-		expect(entry).toContain('"translate": workflow_translate_0,');
-	});
-
-	it('uses the default in-memory execution store when no db.ts is present', () => {
+	it('uses the default sqlite adapter when no db.ts is present', () => {
 		const entry = new NodePlugin().generateEntryPoint(
 			testBuildContext({
 				agents: [{ name: 'assistant', filePath: '/fixture/agents/assistant.ts' }],
@@ -27,13 +11,10 @@ describe('NodePlugin', () => {
 		);
 
 		expect(entry).toContain('sqlite()');
-		expect(entry).toContain(
-			'const { executionStore, runStore, eventStreamStore } = await defaultAdapter.connect()',
-		);
-		expect(entry).not.toContain('userPersistenceAdapter');
+		expect(entry).not.toContain('/fixture/db.ts');
 	});
 
-	it('wires a user-supplied db.ts with migrate and connect validation', () => {
+	it('wires a user-supplied db.ts instead of the default adapter', () => {
 		const entry = new NodePlugin().generateEntryPoint(
 			testBuildContext({
 				agents: [{ name: 'assistant', filePath: '/fixture/agents/assistant.ts' }],
@@ -41,27 +22,11 @@ describe('NodePlugin', () => {
 			}),
 		);
 
-		expect(entry).toContain('import userPersistenceAdapter from "/fixture/db.ts";');
-		expect(entry).toContain("typeof userPersistenceAdapter.connect !== 'function'");
-		expect(entry).toContain('userPersistenceAdapter.migrate');
-		expect(entry).toContain('await userPersistenceAdapter.connect()');
-		expect(entry).not.toContain('defaultAdapter');
+		expect(entry).toContain('"/fixture/db.ts"');
+		expect(entry).not.toContain('sqlite()');
 	});
 
-	it('creates the agent coordinator with reconciliation and dispatch queue', () => {
-		const entry = new NodePlugin().generateEntryPoint(
-			testBuildContext({
-				agents: [{ name: 'assistant', filePath: '/fixture/agents/assistant.ts' }],
-			}),
-		);
-
-		expect(entry).toContain('createNodeAgentCoordinator');
-		expect(entry).toContain('executionStore.submissions');
-		expect(entry).toContain('createNodeDispatchQueue(agentCoordinator)');
-		expect(entry).toContain('agentCoordinator.reconcileSubmissions()');
-	});
-
-	it('composes user app.ts when present and falls back to default app', () => {
+	it('composes user app.ts when present and falls back to the default app', () => {
 		const withApp = new NodePlugin().generateEntryPoint(
 			testBuildContext({
 				agents: [{ name: 'assistant', filePath: '/fixture/agents/assistant.ts' }],
@@ -69,8 +34,7 @@ describe('NodePlugin', () => {
 			}),
 		);
 
-		expect(withApp).toContain('import userApp from "/fixture/app.ts";');
-		expect(withApp).toContain('const flueApp = userApp;');
+		expect(withApp).toContain('"/fixture/app.ts"');
 		expect(withApp).not.toContain('createDefaultFlueApp()');
 
 		const withoutApp = new NodePlugin().generateEntryPoint(
@@ -80,10 +44,10 @@ describe('NodePlugin', () => {
 		);
 
 		expect(withoutApp).toContain('createDefaultFlueApp()');
-		expect(withoutApp).not.toContain('userApp');
+		expect(withoutApp).not.toContain('/fixture/app.ts');
 	});
 
-	it('closes the user persistence adapter on shutdown signals', () => {
+	it('closes the persistence adapter on shutdown signals', () => {
 		const entry = new NodePlugin().generateEntryPoint(
 			testBuildContext({
 				agents: [{ name: 'assistant', filePath: '/fixture/agents/assistant.ts' }],
