@@ -47,8 +47,7 @@ The following categories are stable for framework-owned transport failures. HTTP
 | `route_not_found`          | `404`       | No generated default-application route matches the request.                               |
 | `run_not_found`            | `404`       | The workflow run is missing, expired, or not owned by the resolved workflow instance.     |
 | `run_store_unavailable`    | `501`       | The runtime does not provide workflow-run storage, lookup, or listing.                    |
-| `invalid_request`          | `400`       | The request shape or protocol message is invalid. Read `details` for the specific reason. |
-| `validation_failed`        | `400`       | OpenAPI parameter or query validation failed. `meta.issues` contains issue details.       |
+| `invalid_request`          | `400`       | The request shape, parameters, or protocol message is invalid. Read `details` for the specific reason. |
 | `internal_error`           | `500`       | An unknown or non-public server failure occurred.                                         |
 
 ## Transport envelopes

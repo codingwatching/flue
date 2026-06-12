@@ -12,7 +12,7 @@
  *     -H 'content-type: application/json' \
  *     -d '{}'
  *
- * Expected: HTTP 200 with `{ result: ..., _meta: { runId } }`.
+ * Expected: HTTP 200 with `{ result: ..., runId, streamUrl, offset }`.
  *          Zero events in Sentry.
  */
 import type { FlueContext, WorkflowRouteHandler } from '@flue/runtime';

@@ -10,12 +10,12 @@ import {
 } from 'hono-openapi';
 import {
 	configureErrorRendering,
+	InvalidRequestError,
 	MethodNotAllowedError,
 	RouteNotFoundError,
 	RunNotFoundError,
 	RunStoreUnavailableError,
 	toHttpResponse,
-	ValidationError,
 	validateAgentRequest,
 	validateWorkflowRequest,
 } from '../errors.ts';
@@ -40,12 +40,13 @@ import { agentStreamPath, runStreamPath, type EventStreamStore } from './event-s
 import type { RunPointer, RunStore } from './run-store.ts';
 
 import {
+	AgentAdmissionResponseSchema,
 	AgentInvocationResponseSchema,
 	DirectAgentPayloadSchema,
 	AgentRouteParamSchema,
 	ErrorEnvelopeSchema,
+	InvocationQuerySchema,
 	WorkflowAdmissionResponseSchema,
-	WorkflowInvocationQuerySchema,
 	WorkflowInvocationResponseSchema,
 	WorkflowRouteParamSchema,
 } from './schemas.ts';
@@ -255,9 +256,9 @@ export function getFlueRuntime(): FlueRuntime | undefined {
  * The mounted sub-app exposes:
  *
  * - `GET /openapi.json`
- * - `POST /agents/:name/:id` — send a prompt (sync JSON response)
+ * - `POST /agents/:name/:id` — send a prompt (202 admission; `?wait=result` for a sync JSON result)
  * - `GET/HEAD /agents/:name/:id` — DS event stream read
- * - `POST /workflows/:name` — start a workflow run
+ * - `POST /workflows/:name` — start a workflow run (202 admission; `?wait=result` for a sync JSON result)
  * - `GET/HEAD /runs/:runId` — DS run event stream read
  *
  * Agent and workflow routes are available only when the corresponding module
@@ -273,7 +274,7 @@ export function flue(): Hono {
 		'/workflows/:name',
 		describeRoute(workflowRouteSpec() as DescribeRouteOptions),
 		validated('param', WorkflowRouteParamSchema),
-		validated('query', WorkflowInvocationQuerySchema),
+		validated('query', InvocationQuerySchema),
 		workflowRouteHandler,
 	);
 	app.all('/workflows/:name', workflowRouteHandler);
@@ -282,6 +283,7 @@ export function flue(): Hono {
 		'/agents/:name/:id',
 		describeRoute(agentRouteSpec() as DescribeRouteOptions),
 		validated('param', AgentRouteParamSchema),
+		validated('query', InvocationQuerySchema),
 		agentRouteHandler,
 	);
 	// Non-POSTs still reach the canonical Flue 405 envelope instead of
@@ -339,11 +341,34 @@ function validated(
 ): MiddlewareHandler {
 	return validator(target, schema, (result) => {
 		if (result.success) return;
-		throw new ValidationError({
-			details: `Invalid ${target} parameters.`,
-			issues: result.error,
+		throw new InvalidRequestError({
+			reason: `Invalid ${target} parameters: ${describeValidationIssues(result.error)}`,
 		});
 	}) as MiddlewareHandler;
+}
+
+/**
+ * Flatten standard-schema validation issues into a caller-safe sentence.
+ * The raw issue objects are a validation-library-internal shape and must not
+ * reach the wire — clients would freeze that shape into their error handling.
+ */
+function describeValidationIssues(issues: unknown): string {
+	if (!Array.isArray(issues) || issues.length === 0) return 'request validation failed.';
+	return issues
+		.map((issue: { message?: unknown; path?: unknown }) => {
+			const message = typeof issue.message === 'string' ? issue.message : 'Invalid value.';
+			const path = Array.isArray(issue.path)
+				? issue.path
+						.map((segment) =>
+							typeof segment === 'object' && segment !== null && 'key' in segment
+								? String((segment as { key: unknown }).key)
+								: String(segment),
+						)
+						.join('.')
+				: '';
+			return path ? `${path}: ${message}` : message;
+		})
+		.join(' ');
 }
 
 function jsonResponse(schema: Parameters<typeof resolver>[0], description: string) {
@@ -410,7 +435,7 @@ function agentRouteSpec() {
 		operationId: 'invokeAgent',
 		summary: 'Invoke an agent instance',
 		description:
-			'Prompts the named agent instance as an attached interaction. Use dispatch(...) from application code for asynchronous delivery.',
+			'Prompts the named agent instance as an attached interaction. By default returns accepted stream coordinates (202); use ?wait=result for a synchronous JSON result. Observe events via the Durable Streams GET endpoint at the same URL. Use dispatch(...) from application code for asynchronous delivery.',
 		requestBody: {
 			required: true,
 			content: {
@@ -420,8 +445,9 @@ function agentRouteSpec() {
 			},
 		},
 		responses: {
+			202: jsonResponse(AgentAdmissionResponseSchema, 'Prompt accepted.'),
 			200: {
-				description: 'Attached prompt result.',
+				description: 'Synchronous prompt result (?wait=result).',
 				content: {
 					'application/json': {
 						schema: resolver(AgentInvocationResponseSchema),
@@ -430,6 +456,7 @@ function agentRouteSpec() {
 			},
 			...errorResponses(),
 		},
+		'x-flue-invocation-modes': ['accepted', 'wait-result'],
 		'x-flue-user-defined': true,
 	};
 }

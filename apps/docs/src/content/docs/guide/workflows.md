@@ -66,7 +66,7 @@ export const route: WorkflowRouteHandler = async (_c, next) => next();
 
 An exposed `summarize` workflow accepts requests at `POST /workflows/summarize`. The route middleware is also the boundary where your application can authenticate or reject an incoming request before starting a run.
 
-By default, `POST /workflows/summarize` returns `202 { runId }` after admission. Add `?wait=result` to wait for the completed result in the same request. For HTTP response modes, authentication, and custom application mounts, see [Routing](/docs/guide/routing/).
+By default, `POST /workflows/summarize` returns `202 { runId, streamUrl, offset }` after admission. Add `?wait=result` to wait for the completed result in the same request. For HTTP response modes, authentication, and custom application mounts, see [Routing](/docs/guide/routing/).
 
 ## Working with the harness
 

@@ -41,6 +41,15 @@ describe('flue()', () => {
 		});
 		expect(Object.keys(body.paths['/workflows/{name}'] ?? {})).toEqual(['post']);
 		expect(Object.keys(body.paths['/agents/{name}/{id}'] ?? {})).toEqual(['post']);
+		// Both invocation routes document the same modes: 202 admission by
+		// default plus the ?wait=result synchronous mode.
+		for (const post of [body.paths['/workflows/{name}']?.post, body.paths['/agents/{name}/{id}']?.post]) {
+			expect(post['x-flue-invocation-modes']).toEqual(['accepted', 'wait-result']);
+			expect(Object.keys(post.responses)).toEqual(expect.arrayContaining(['200', '202']));
+			expect(post.parameters).toEqual(
+				expect.arrayContaining([expect.objectContaining({ name: 'wait', in: 'query' })]),
+			);
+		}
 		const schema = body.paths['/agents/{name}/{id}']?.post?.requestBody?.content?.['application/json']?.schema;
 		expect(schema).toMatchObject({
 			type: 'object',
@@ -91,6 +100,9 @@ describe('flue()', () => {
 			streamUrl: 'http://localhost/api/agents/assistant/customer-123',
 			offset: '-1',
 		});
+		// 202 admissions mirror the DS stream-creation convention.
+		expect(response.headers.get('location')).toBe('http://localhost/api/agents/assistant/customer-123');
+		expect(response.headers.get('stream-next-offset')).toBe('-1');
 	});
 
 	it('accepts direct agent images and delivers them unchanged', async () => {
@@ -145,6 +157,60 @@ describe('flue()', () => {
 			streamUrl: 'http://localhost/api/agents/assistant/customer-123',
 			offset: '-1',
 		});
+	});
+
+	it('rejects an unknown wait value with invalid_request when an agent POST mistypes the query', async () => {
+		configureFlueRuntime({
+			target: 'node',
+			manifest: {
+				agents: [{ name: 'assistant', transports: { http: true }, created: true }],
+			},
+			createAdmission: {
+				assistant: (id) => async (payload) => ({ instanceId: id, payload }),
+			},
+			createContext: createTestContext,
+			eventStreamStore: createTestEventStreamStore(),
+		});
+		const app = new Hono();
+		app.route('/api', flue());
+
+		const response = await app.fetch(
+			new Request('http://localhost/api/agents/assistant/customer-123?wait=results', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ message: 'hello' }),
+			}),
+		);
+
+		expect(response.status).toBe(400);
+		expect(((await response.json()) as { error: { type: string } }).error.type).toBe(
+			'invalid_request',
+		);
+	});
+
+	it('rejects an unknown wait value with invalid_request when a workflow POST mistypes the query', async () => {
+		configureFlueRuntime({
+			target: 'node',
+			manifest: {
+				agents: [],
+				workflows: [{ name: 'daily-report', transports: { http: true } }],
+			},
+			workflowHandlers: { 'daily-report': () => ({ delivered: true }) },
+			createContext: createTestContext,
+			runStore: new InMemoryRunStore(),
+			eventStreamStore: createTestEventStreamStore(),
+		});
+		const app = new Hono();
+		app.route('/api', flue());
+
+		const response = await app.fetch(
+			new Request('http://localhost/api/workflows/daily-report?wait=results', { method: 'POST' }),
+		);
+
+		expect(response.status).toBe(400);
+		expect(((await response.json()) as { error: { type: string } }).error.type).toBe(
+			'invalid_request',
+		);
 	});
 
 	it('captures the prompt tail offset and serves exactly that prompt\'s events from it', async () => {
@@ -687,12 +753,14 @@ describe('flue()', () => {
 		);
 
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as { result: unknown; _meta: { runId: string } };
+		const body = (await response.json()) as { result: unknown; runId: string; streamUrl: string };
 		expect(body).toEqual({
 			result: { payload: {} },
-			_meta: { runId: expect.stringMatching(/^run_[0-9A-HJKMNP-TV-Z]{26}$/) },
+			runId: expect.stringMatching(/^run_[0-9A-HJKMNP-TV-Z]{26}$/),
+			streamUrl: expect.any(String),
+			offset: '-1',
 		});
-		expect(response.headers.get('x-flue-run-id')).toBe(body._meta.runId);
+		expect(body.streamUrl).toBe(`http://localhost/api/runs/${body.runId}`);
 	});
 
 	it('rejects a direct agent body when it does not contain a string message', async () => {

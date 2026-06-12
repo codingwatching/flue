@@ -111,6 +111,44 @@ export interface HandleWorkflowOptions {
 }
 
 /**
+ * Derive the absolute DS stream URL advertised in invocation responses from
+ * the incoming request URL (query stripped). Agent prompts stream at the
+ * request URL itself; workflow runs stream at the sibling `/runs/:runId`
+ * route under the same mount prefix as the admitting `/workflows/:name`
+ * route.
+ */
+function invocationStreamUrl(request: Request, runId?: string): string {
+	const url = new URL(request.url);
+	url.search = '';
+	if (runId !== undefined) {
+		const index = url.pathname.lastIndexOf('/workflows/');
+		const prefix = index > 0 ? url.pathname.slice(0, index) : '';
+		url.pathname = `${prefix}/runs/${encodeURIComponent(runId)}`;
+	}
+	return url.toString();
+}
+
+/**
+ * Build the 202 admission response shared by agent and workflow invocation.
+ * The stream coordinates are mirrored as `Location` and `Stream-Next-Offset`
+ * headers, matching the Durable Streams stream-creation convention.
+ */
+function admissionResponse(
+	body: Record<string, unknown>,
+	streamUrl: string,
+	offset: string,
+): Response {
+	return new Response(JSON.stringify(body), {
+		status: 202,
+		headers: {
+			'content-type': 'application/json',
+			'Location': streamUrl,
+			'Stream-Next-Offset': offset,
+		},
+	});
+}
+
+/**
  * Handle one attached `/agents/:name/:id` prompt interaction.
  *
 	 * Returns accepted stream coordinates by default, or a synchronous JSON
@@ -127,9 +165,7 @@ export async function handleAgentRequest(opts: HandleAgentOptions): Promise<Resp
 			payload,
 			admitAttachedSubmission: opts.admitAttachedSubmission,
 		};
-		const streamUrlUrl = new URL(request.url);
-		streamUrlUrl.search = '';
-		const streamUrl = streamUrlUrl.toString();
+		const streamUrl = invocationStreamUrl(request);
 		// Stream creation is owned by the coordinator at first accepted prompt
 		// (idempotent createStream before processing each claimed submission).
 		// Creating it here would leave a phantom open stream behind when
@@ -141,10 +177,7 @@ export async function handleAgentRequest(opts: HandleAgentOptions): Promise<Resp
 			return runDirectSyncMode(directOptions, streamUrl, offset);
 		}
 		await opts.admitAttachedSubmission(payload, undefined, false);
-		return new Response(JSON.stringify({ streamUrl, offset }), {
-			status: 202,
-			headers: { 'content-type': 'application/json' },
-		});
+		return admissionResponse({ streamUrl, offset }, streamUrl, offset);
 	} catch (err) {
 		return toHttpResponse(err);
 	}
@@ -182,9 +215,7 @@ export async function handleWorkflowRequest(opts: HandleWorkflowOptions): Promis
 		if (wait === 'result') return await runSyncMode(execution);
 		return await runWorkflowAdmissionMode(execution);
 	} catch (err) {
-		const response = toHttpResponse(err);
-		response.headers.set('X-Flue-Run-Id', runId);
-		return response;
+		return toHttpResponse(err);
 	}
 }
 
@@ -240,6 +271,10 @@ interface WorkflowAdmissionOptions {
 
 interface AdmittedWorkflowExecution {
 	runId: string;
+	/** Absolute DS stream URL for the run's event stream. */
+	streamUrl: string;
+	/** Stream offset captured at admission — reading from it yields the run's events from the start. */
+	offset: string;
 	runStore: RunStore;
 	lifecycle: WorkflowRunLifecycle;
 	startWorkflowAdmission: StartWorkflowAdmissionFn;
@@ -274,8 +309,14 @@ async function prepareWorkflowExecution(
 		eventStreamStore,
 		requirePersistedAdmission: true,
 	});
+	// Capture the stream coordinates at admission, before any run event is
+	// appended, so reading from the returned offset replays the whole run.
+	const offset =
+		(await eventStreamStore.getStreamMeta(runStreamPath(runId)))?.nextOffset ?? '-1';
 	return {
 		runId,
+		streamUrl: invocationStreamUrl(request, runId),
+		offset,
 		runStore,
 		lifecycle,
 		startWorkflowAdmission,
@@ -326,10 +367,11 @@ async function runWorkflowAdmissionMode(execution: AdmittedWorkflowExecution): P
 	execution.completion?.catch((error) => {
 		console.error('[flue] Workflow run failed:', execution.runId, error);
 	});
-	return new Response(JSON.stringify({ status: 'accepted', runId: execution.runId }), {
-		status: 202,
-		headers: { 'content-type': 'application/json', 'X-Flue-Run-Id': execution.runId },
-	});
+	return admissionResponse(
+		{ runId: execution.runId, streamUrl: execution.streamUrl, offset: execution.offset },
+		execution.streamUrl,
+		execution.offset,
+	);
 }
 
 export async function failRecoveredRun(opts: FailRecoveredRunOptions): Promise<void> {
@@ -465,9 +507,11 @@ async function runSyncMode(execution: AdmittedWorkflowExecution): Promise<Respon
 	return new Response(
 		JSON.stringify({
 			result: result === undefined ? null : result,
-			_meta: { runId: execution.runId },
+			runId: execution.runId,
+			streamUrl: execution.streamUrl,
+			offset: execution.offset,
 		}),
-		{ headers: { 'content-type': 'application/json', 'X-Flue-Run-Id': execution.runId } },
+		{ headers: { 'content-type': 'application/json' } },
 	);
 }
 

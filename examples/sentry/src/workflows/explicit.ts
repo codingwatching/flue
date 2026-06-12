@@ -29,7 +29,7 @@
  *     -d '{}'
  *
  * Expected:
- *   - HTTP 200 with `{ result: { ok: true, ... }, _meta: { runId } }`.
+ *   - HTTP 200 with `{ result: { ok: true, ... }, runId, streamUrl, offset }`.
  *   - Two issues in Sentry, both tagged `flue.workflow=explicit`.
  */
 import type { FlueContext, WorkflowRouteHandler } from '@flue/runtime';

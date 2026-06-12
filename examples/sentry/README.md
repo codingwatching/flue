@@ -190,8 +190,8 @@ curl -X POST http://localhost:3583/workflows/explicit?wait=result \
   -d '{}'
 ```
 
-Each response includes a `_meta.runId` field. That's the same id you'll
-see as the `flue.run_id` tag in Sentry.
+Each response includes a top-level `runId` field. That's the same id
+you'll see as the `flue.run_id` tag in Sentry.
 
 ### 5. Replay a captured run
 

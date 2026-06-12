@@ -55,7 +55,7 @@ function createApp(runtime: FlueRuntime): Hono {
 }
 
 describe('workflow invocation', () => {
-	it('returns an accepted run id when a workflow request uses default admission mode', async () => {
+	it('returns accepted run stream coordinates when a workflow request uses default admission mode', async () => {
 		let release!: () => void;
 		let runId: string | undefined;
 		const completionGate = new Promise<void>((resolve) => {
@@ -79,12 +79,22 @@ describe('workflow invocation', () => {
 			const response = await app.fetch(
 				new Request('http://localhost/flue/workflows/daily-report', { method: 'POST' }),
 			);
-			const body = (await response.json()) as { status: string; runId: string };
+			const body = (await response.json()) as { runId: string; streamUrl: string; offset: string };
 			runId = body.runId;
 
 			expect(response.status).toBe(202);
-			expect(body).toEqual({ status: 'accepted', runId: expect.any(String) });
+			expect(body).toEqual({
+				runId: expect.any(String),
+				streamUrl: expect.any(String),
+				offset: '-1',
+			});
 			expect(runId).toMatch(/^run_[0-9A-HJKMNP-TV-Z]{26}$/);
+			// The server owns stream-coordinate derivation: the run stream lives
+			// at the sibling /runs/:runId route under the same mount prefix.
+			expect(body.streamUrl).toBe(`http://localhost/flue/runs/${runId}`);
+			// 202 admissions mirror the DS stream-creation convention.
+			expect(response.headers.get('location')).toBe(body.streamUrl);
+			expect(response.headers.get('stream-next-offset')).toBe(body.offset);
 			expect((await runStore.getRun(runId))?.status).toBe('active');
 		} finally {
 			release();
@@ -94,7 +104,7 @@ describe('workflow invocation', () => {
 		});
 	});
 
-	it('returns a synchronous result envelope and run id header when a workflow request uses wait result mode', async () => {
+	it('returns a flat synchronous result envelope when a workflow request uses wait result mode', async () => {
 		const app = createApp({
 			target: 'node',
 			manifest: { agents: [], workflows: [{ name: 'daily-report', transports: { http: true } }] },
@@ -108,12 +118,17 @@ describe('workflow invocation', () => {
 		const response = await app.fetch(
 			new Request('http://localhost/flue/workflows/daily-report?wait=result', { method: 'POST' }),
 		);
-		const body = (await response.json()) as { result: unknown; _meta: { runId: string } };
+		const body = (await response.json()) as { result: unknown; runId: string; streamUrl: string; offset: string };
 
 		expect(response.status).toBe(200);
-		expect(body).toEqual({ result: { delivered: true }, _meta: { runId: expect.any(String) } });
-		expect(body._meta.runId).toMatch(/^run_[0-9A-HJKMNP-TV-Z]{26}$/);
-		expect(response.headers.get('x-flue-run-id')).toBe(body._meta.runId);
+		expect(body).toEqual({
+			result: { delivered: true },
+			runId: expect.any(String),
+			streamUrl: expect.any(String),
+			offset: '-1',
+		});
+		expect(body.runId).toMatch(/^run_[0-9A-HJKMNP-TV-Z]{26}$/);
+		expect(body.streamUrl).toBe(`http://localhost/flue/runs/${body.runId}`);
 	});
 
 	it('rejects workflow admission before executing the handler when run-store persistence is unavailable', async () => {
@@ -141,7 +156,6 @@ describe('workflow invocation', () => {
 				details: 'This endpoint requires the generated runtime to be configured with a run store.',
 			},
 		});
-		expect(response.headers.get('x-flue-run-id')).toMatch(/^run_[0-9A-HJKMNP-TV-Z]{26}$/);
 		expect(executions).toBe(0);
 	});
 
@@ -178,7 +192,6 @@ describe('workflow invocation', () => {
 					details: 'The server encountered an unexpected error while handling this request.',
 				},
 			});
-			expect(response.headers.get('x-flue-run-id')).toMatch(/^run_[0-9A-HJKMNP-TV-Z]{26}$/);
 			expect(executions).toBe(0);
 		} finally {
 			consoleError.mockRestore();
@@ -208,7 +221,7 @@ describe('workflow invocation', () => {
 				body: JSON.stringify({ report: 'weekly' }),
 			}),
 		);
-		const body = (await response.json()) as { result: unknown; _meta: { runId: string } };
+		const body = (await response.json()) as { result: unknown; runId: string };
 
 		expect(response.status).toBe(200);
 		expect(body).toEqual({
@@ -218,7 +231,9 @@ describe('workflow invocation', () => {
 				authorization: 'Bearer test-token',
 				body: { report: 'weekly' },
 			},
-			_meta: { runId: expect.any(String) },
+			runId: expect.any(String),
+			streamUrl: expect.any(String),
+			offset: '-1',
 		});
 	});
 
@@ -237,13 +252,18 @@ describe('workflow invocation', () => {
 		const response = await app.fetch(
 			new Request('http://localhost/flue/workflows/daily-report?wait=result', { method: 'POST' }),
 		);
-		const body = (await response.json()) as { result: unknown; _meta: { runId: string } };
+		const body = (await response.json()) as { result: unknown; runId: string };
 
 		expect(response.status).toBe(200);
-		expect(body).toEqual({ result: null, _meta: { runId: expect.any(String) } });
-		const runRecord = await runStore.getRun(body._meta.runId);
+		expect(body).toEqual({
+			result: null,
+			runId: expect.any(String),
+			streamUrl: expect.any(String),
+			offset: '-1',
+		});
+		const runRecord = await runStore.getRun(body.runId);
 		expect(runRecord).toEqual({
-			runId: body._meta.runId,
+			runId: body.runId,
 			workflowName: 'daily-report',
 			status: 'completed',
 			startedAt: expect.any(String),
@@ -279,7 +299,6 @@ describe('workflow run lifecycle', () => {
 			const response = await app.fetch(
 				new Request('http://localhost/flue/workflows/daily-report?wait=result', { method: 'POST' }),
 			);
-			const runId = response.headers.get('x-flue-run-id');
 
 			expect(response.status).toBe(500);
 			expect(await response.json()).toEqual({
@@ -289,6 +308,7 @@ describe('workflow run lifecycle', () => {
 					details: 'The server encountered an unexpected error while handling this request.',
 				},
 			});
+			const runId = (await runStore.listRuns()).runs[0]?.runId;
 			expect(runId).toMatch(/^run_[0-9A-HJKMNP-TV-Z]{26}$/);
 			const runRecord = await runStore.getRun(runId!);
 			expect(runRecord).toEqual({
@@ -329,10 +349,14 @@ describe('workflow run lifecycle', () => {
 			const response = await app.fetch(
 				new Request('http://localhost/flue/workflows/daily-report', { method: 'POST' }),
 			);
-			const body = (await response.json()) as { status: string; runId: string };
+			const body = (await response.json()) as { runId: string };
 
 			expect(response.status).toBe(202);
-			expect(body).toEqual({ status: 'accepted', runId: expect.any(String) });
+			expect(body).toEqual({
+				runId: expect.any(String),
+				streamUrl: expect.any(String),
+				offset: '-1',
+			});
 			// Vitest fails the run on an unhandled rejection, so waiting for the
 			// terminal record also guards against the background completion
 			// rejecting without a handler.
