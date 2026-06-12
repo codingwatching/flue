@@ -1,34 +1,204 @@
-import { describe, it } from 'vitest';
+import { getModel } from '@earendil-works/pi-ai';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createAgent, ProviderRegistrationError } from '../src/index.ts';
+import { createFlueContext, InMemorySessionStore, resolveModel } from '../src/internal.ts';
+import { registerProvider, resetProvidersForTests } from '../src/runtime/providers.ts';
+import { createNoopSessionEnv } from './fixtures/session-env.ts';
 
-describe('registerProvider()', () => {
-	it.todo(
-		'routes a model operation through a registered HTTP provider when the model uses its provider id',
-	);
-	it.todo(
-		'routes later model operations through the latest registration when a provider id is registered repeatedly',
-	);
-	it.todo(
-		'applies registered headers and default model metadata when an operation uses a registered provider',
-	);
-	it.todo(
-		'applies model-specific metadata overrides when an operation uses the configured model id',
-	);
-	it.todo('rejects a model operation when a registered provider specifier omits its model id');
+afterEach(() => {
+	resetProvidersForTests();
+	vi.unstubAllGlobals();
 });
 
-describe('configureProvider()', () => {
-	it.todo(
-		'sends built-in-provider operations to the configured base URL when configuration supplies a base URL',
-	);
-	it.todo(
-		'sends merged catalog and configured headers when a configured provider already has headers',
-	);
-	it.todo('uses configured API keys when an operation calls a configured provider');
-	it.todo('prefers a configured API key when a registered provider also supplies an API key');
-	it.todo(
-		'uses the latest transport configuration for later operations when a provider id is configured repeatedly',
-	);
-	it.todo(
-		'sends store true only when storeResponses is enabled for an OpenAI Responses API provider',
-	);
+/** Stub global fetch, capture outgoing requests, and answer with a valid SSE stream. */
+function captureFetch(assistantText: string): Request[] {
+	const seen: Request[] = [];
+	vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+		seen.push(new Request(input, init));
+		const encoder = new TextEncoder();
+		const chunk = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
+		const body = [
+			chunk({
+				id: 'chunk-1',
+				object: 'chat.completion.chunk',
+				created: 1,
+				choices: [
+					{ index: 0, delta: { role: 'assistant', content: assistantText }, finish_reason: null },
+				],
+			}),
+			chunk({
+				id: 'chunk-1',
+				object: 'chat.completion.chunk',
+				created: 1,
+				choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+				usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+			}),
+			'data: [DONE]\n\n',
+		].join('');
+		return new Response(
+			new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(body));
+					controller.close();
+				},
+			}),
+			{ headers: { 'content-type': 'text/event-stream' } },
+		);
+	});
+	return seen;
+}
+
+/** Incidental harness plumbing; model resolution under test flows through `resolveModel`. */
+function createContext() {
+	return createFlueContext({
+		id: 'providers-test-instance',
+		payload: {},
+		env: {},
+		agentConfig: {
+			systemPrompt: '',
+			skills: {},
+			model: undefined,
+			resolveModel,
+		},
+		createDefaultEnv: async () => createNoopSessionEnv(),
+		defaultStore: new InMemorySessionStore(),
+	});
+}
+
+describe('registerProvider()', () => {
+	it('sends operations to the registered base URL when a model uses a registered provider id', async () => {
+		const seen = captureFetch('Hello from the registered provider.');
+		registerProvider('capture-http', {
+			api: 'openai-completions',
+			baseUrl: 'http://providers.test/v1',
+			apiKey: 'sk-capture',
+		});
+		const harness = await createContext().init(
+			createAgent(() => ({ model: 'capture-http/capture-model' })),
+		);
+		const session = await harness.session();
+
+		const response = await session.prompt('Say hello.');
+
+		expect(seen).toHaveLength(1);
+		const url = new URL(seen[0]!.url);
+		expect(url.origin).toBe('http://providers.test');
+		expect(url.pathname).toBe('/v1/chat/completions');
+		expect(response.text).toBe('Hello from the registered provider.');
+		expect(response.model).toEqual({ provider: 'capture-http', id: 'capture-model' });
+	});
+
+	it('sends the registered api key and headers on outgoing requests when a registration supplies them', async () => {
+		const seen = captureFetch('Authenticated.');
+		registerProvider('capture-auth', {
+			api: 'openai-completions',
+			baseUrl: 'http://providers.test/v1',
+			apiKey: 'sk-secret',
+			headers: { 'x-gateway-tenant': 'acme' },
+		});
+		const harness = await createContext().init(
+			createAgent(() => ({ model: 'capture-auth/capture-model' })),
+		);
+		const session = await harness.session();
+
+		await session.prompt('Say hello.');
+
+		expect(seen).toHaveLength(1);
+		expect(seen[0]!.headers.get('authorization')).toBe('Bearer sk-secret');
+		expect(seen[0]!.headers.get('x-gateway-tenant')).toBe('acme');
+	});
+
+	it('preserves catalog model metadata when a catalog provider id is registered with transport overrides', () => {
+		const catalog = getModel('anthropic', 'claude-sonnet-4-6');
+		expect(catalog).toBeDefined();
+		registerProvider('anthropic', {
+			baseUrl: 'https://gateway.test/anthropic',
+			apiKey: 'sk-gateway',
+			headers: { 'x-gateway-tenant': 'acme' },
+		});
+
+		const resolved = resolveModel('anthropic/claude-sonnet-4-6');
+
+		expect(resolved).toMatchObject({
+			id: 'claude-sonnet-4-6',
+			provider: 'anthropic',
+			api: catalog.api,
+			baseUrl: 'https://gateway.test/anthropic',
+			cost: catalog.cost,
+			contextWindow: catalog.contextWindow,
+			maxTokens: catalog.maxTokens,
+		});
+		expect(resolved?.contextWindow).toBeGreaterThan(0);
+		expect(resolved?.headers).toMatchObject({ 'x-gateway-tenant': 'acme' });
+	});
+
+	it('derives the wire protocol from the catalog when a registered catalog provider resolves an unlisted model id', () => {
+		registerProvider('anthropic', { baseUrl: 'https://gateway.test/anthropic' });
+
+		const resolved = resolveModel('anthropic/brand-new-model');
+
+		expect(resolved).toMatchObject({
+			id: 'brand-new-model',
+			provider: 'anthropic',
+			api: 'anthropic-messages',
+			baseUrl: 'https://gateway.test/anthropic',
+			contextWindow: 0,
+			maxTokens: 0,
+		});
+	});
+
+	it('uses only the latest registration when a provider id is registered repeatedly', () => {
+		registerProvider('repeat-http', {
+			api: 'openai-completions',
+			baseUrl: 'http://first.test/v1',
+			headers: { 'x-first': 'yes' },
+			contextWindow: 32000,
+		});
+		registerProvider('repeat-http', {
+			api: 'openai-completions',
+			baseUrl: 'http://second.test/v1',
+		});
+
+		const resolved = resolveModel('repeat-http/some-model');
+
+		expect(resolved).toMatchObject({ baseUrl: 'http://second.test/v1', contextWindow: 0 });
+		expect(resolved?.headers).toBeUndefined();
+	});
+
+	it('applies per-model metadata overrides when a registration configures the resolved model id', () => {
+		registerProvider('metadata-http', {
+			api: 'openai-completions',
+			baseUrl: 'http://models.test/v1',
+			contextWindow: 8000,
+			maxTokens: 1000,
+			models: { tuned: { contextWindow: 200000, maxTokens: 8192 } },
+		});
+
+		expect(resolveModel('metadata-http/tuned')).toMatchObject({
+			contextWindow: 200000,
+			maxTokens: 8192,
+		});
+		expect(resolveModel('metadata-http/other')).toMatchObject({
+			contextWindow: 8000,
+			maxTokens: 1000,
+		});
+	});
+
+	it('throws ProviderRegistrationError when a non-catalog provider id is registered without api and baseUrl', () => {
+		expect(() => registerProvider('mystery-gateway', { apiKey: 'sk-test' })).toThrow(
+			ProviderRegistrationError,
+		);
+		expect(() =>
+			registerProvider('mystery-gateway', { baseUrl: 'http://mystery.test/v1' }),
+		).toThrow(ProviderRegistrationError);
+	});
+
+	it('rejects a model specifier that omits its model id when its provider id is registered', () => {
+		registerProvider('no-model-http', {
+			api: 'openai-completions',
+			baseUrl: 'http://no-model.test/v1',
+		});
+
+		expect(() => resolveModel('no-model-http/')).toThrow();
+	});
 });
