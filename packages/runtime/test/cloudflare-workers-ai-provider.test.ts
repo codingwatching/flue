@@ -296,6 +296,70 @@ describe('Cloudflare AI binding provider', () => {
 		]);
 	});
 
+	it('routes interleaved chunks to the right tool calls when the binding streams parallel tool calls', async () => {
+		const run = vi.fn(async () =>
+			createSseResponse(
+				'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"weather","arguments":""}}]}}]}\n\n',
+				'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_b","function":{"name":"time","arguments":""}}]}}]}\n\n',
+				'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"city\\":\\"Paris\\"}"}}]}}]}\n\n',
+				'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\\"zone\\":\\"CET\\"}"}}]}}]}\n\n',
+				'data: {"choices":[{"finish_reason":"tool_calls"}]}\n\n',
+			),
+		);
+		registerProvider('cloudflare-parallel-tool-events', {
+			api: 'cloudflare-ai-binding',
+			binding: { run },
+		});
+		const model = resolveModel('cloudflare-parallel-tool-events/@cf/meta/llama-3.1-8b-instruct');
+		expect(model).toBeDefined();
+		if (!model) throw new Error('Expected a resolved Workers AI model.');
+
+		const events = await collectEvents(
+			getCloudflareAIBindingApiProvider().streamSimple(model as Model<'cloudflare-ai-binding'>, {
+				messages: [],
+			}),
+		);
+
+		expect(events).toEqual([
+			expect.objectContaining({ type: 'start' }),
+			expect.objectContaining({ type: 'toolcall_start', contentIndex: 0 }),
+			expect.objectContaining({ type: 'toolcall_delta', contentIndex: 0, delta: '' }),
+			expect.objectContaining({ type: 'toolcall_start', contentIndex: 1 }),
+			expect.objectContaining({ type: 'toolcall_delta', contentIndex: 1, delta: '' }),
+			expect.objectContaining({
+				type: 'toolcall_delta',
+				contentIndex: 0,
+				delta: '{"city":"Paris"}',
+			}),
+			expect.objectContaining({
+				type: 'toolcall_delta',
+				contentIndex: 1,
+				delta: '{"zone":"CET"}',
+			}),
+			expect.objectContaining({
+				type: 'toolcall_end',
+				contentIndex: 0,
+				toolCall: {
+					type: 'toolCall',
+					id: 'call_a',
+					name: 'weather',
+					arguments: { city: 'Paris' },
+				},
+			}),
+			expect.objectContaining({
+				type: 'toolcall_end',
+				contentIndex: 1,
+				toolCall: {
+					type: 'toolCall',
+					id: 'call_b',
+					name: 'time',
+					arguments: { zone: 'CET' },
+				},
+			}),
+			expect.objectContaining({ type: 'done', reason: 'toolUse' }),
+		]);
+	});
+
 	it('reports streamed token usage including cached prompt tokens when the binding returns usage SSE events', async () => {
 		const run = vi.fn(async () =>
 			createSseResponse(

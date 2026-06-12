@@ -342,14 +342,16 @@ const streamCloudflareWorkersAi: StreamFunction<CloudflareAIBindingApi, SimpleSt
 
 			stream.push({ type: 'start', partial: output });
 
-			let currentBlock: StreamingBlock | null = null;
+			let textBlock: StreamingTextBlock | null = null;
+			let thinkingBlock: StreamingThinkingBlock | null = null;
 			let hasFinishReason = false;
+			const toolCallBlocksByIndex = new Map<number, StreamingToolCallBlock>();
+			const toolCallBlocksById = new Map<string, StreamingToolCallBlock>();
 			const blocks = output.content as StreamingBlock[];
 			const indexOf = (block: StreamingBlock | null): number =>
 				block ? blocks.indexOf(block) : -1;
 
-			const finishCurrentBlock = (block: StreamingBlock | null): void => {
-				if (!block) return;
+			const finishBlock = (block: StreamingBlock): void => {
 				const contentIndex = indexOf(block);
 				if (contentIndex === -1) return;
 				if (block.type === 'text') {
@@ -379,6 +381,74 @@ const streamCloudflareWorkersAi: StreamFunction<CloudflareAIBindingApi, SimpleSt
 				}
 			};
 
+			const ensureTextBlock = (): StreamingTextBlock => {
+				if (!textBlock) {
+					textBlock = { type: 'text', text: '' };
+					blocks.push(textBlock);
+					stream.push({
+						type: 'text_start',
+						contentIndex: indexOf(textBlock),
+						partial: output,
+					});
+				}
+				return textBlock;
+			};
+
+			const ensureThinkingBlock = (thinkingSignature: string): StreamingThinkingBlock => {
+				if (!thinkingBlock) {
+					thinkingBlock = { type: 'thinking', thinking: '', thinkingSignature };
+					blocks.push(thinkingBlock);
+					stream.push({
+						type: 'thinking_start',
+						contentIndex: indexOf(thinkingBlock),
+						partial: output,
+					});
+				}
+				return thinkingBlock;
+			};
+
+			const ensureToolCallBlock = (toolCall: {
+				index?: number;
+				id?: string;
+				function?: { name?: string; arguments?: string };
+			}): StreamingToolCallBlock => {
+				const streamIndex = typeof toolCall.index === 'number' ? toolCall.index : undefined;
+				let block = streamIndex !== undefined ? toolCallBlocksByIndex.get(streamIndex) : undefined;
+				if (!block && toolCall.id) {
+					block = toolCallBlocksById.get(toolCall.id);
+				}
+				if (!block) {
+					block = {
+						type: 'toolCall',
+						id: toolCall.id ?? '',
+						name: toolCall.function?.name ?? '',
+						arguments: {},
+						partialArgs: '',
+						streamIndex,
+					} satisfies StreamingToolCallBlock;
+					if (streamIndex !== undefined) {
+						toolCallBlocksByIndex.set(streamIndex, block);
+					}
+					if (toolCall.id) {
+						toolCallBlocksById.set(toolCall.id, block);
+					}
+					blocks.push(block);
+					stream.push({
+						type: 'toolcall_start',
+						contentIndex: indexOf(block),
+						partial: output,
+					});
+				}
+				if (streamIndex !== undefined && block.streamIndex === undefined) {
+					block.streamIndex = streamIndex;
+					toolCallBlocksByIndex.set(streamIndex, block);
+				}
+				if (toolCall.id) {
+					toolCallBlocksById.set(toolCall.id, block);
+				}
+				return block;
+			};
+
 			for await (const rawChunk of iterateSseChunks(response.body)) {
 				const chunk = rawChunk as ChatCompletionChunk | null;
 				if (!chunk || typeof chunk !== 'object') continue;
@@ -405,20 +475,11 @@ const streamCloudflareWorkersAi: StreamFunction<CloudflareAIBindingApi, SimpleSt
 				if (!delta) continue;
 
 				if (delta.content !== null && delta.content !== undefined && delta.content.length > 0) {
-					if (!currentBlock || currentBlock.type !== 'text') {
-						finishCurrentBlock(currentBlock);
-						currentBlock = { type: 'text', text: '' };
-						blocks.push(currentBlock);
-						stream.push({
-							type: 'text_start',
-							contentIndex: indexOf(currentBlock),
-							partial: output,
-						});
-					}
-					currentBlock.text += delta.content;
+					const block = ensureTextBlock();
+					block.text += delta.content;
 					stream.push({
 						type: 'text_delta',
-						contentIndex: indexOf(currentBlock),
+						contentIndex: indexOf(block),
 						delta: delta.content,
 						partial: output,
 					});
@@ -426,24 +487,11 @@ const streamCloudflareWorkersAi: StreamFunction<CloudflareAIBindingApi, SimpleSt
 
 				const reasoningDelta = pickReasoning(delta);
 				if (reasoningDelta) {
-					if (!currentBlock || currentBlock.type !== 'thinking') {
-						finishCurrentBlock(currentBlock);
-						currentBlock = {
-							type: 'thinking',
-							thinking: '',
-							thinkingSignature: reasoningDelta.field,
-						};
-						blocks.push(currentBlock);
-						stream.push({
-							type: 'thinking_start',
-							contentIndex: indexOf(currentBlock),
-							partial: output,
-						});
-					}
-					currentBlock.thinking += reasoningDelta.text;
+					const block = ensureThinkingBlock(reasoningDelta.field);
+					block.thinking += reasoningDelta.text;
 					stream.push({
 						type: 'thinking_delta',
-						contentIndex: indexOf(currentBlock),
+						contentIndex: indexOf(block),
 						delta: reasoningDelta.text,
 						partial: output,
 					});
@@ -451,55 +499,33 @@ const streamCloudflareWorkersAi: StreamFunction<CloudflareAIBindingApi, SimpleSt
 
 				if (delta.tool_calls) {
 					for (const toolCall of delta.tool_calls) {
-						const streamIndex = typeof toolCall.index === 'number' ? toolCall.index : undefined;
-						const continueExisting =
-							currentBlock?.type === 'toolCall' &&
-							((streamIndex !== undefined && currentBlock.streamIndex === streamIndex) ||
-								(streamIndex === undefined && !!toolCall.id && currentBlock.id === toolCall.id));
-						if (!continueExisting) {
-							finishCurrentBlock(currentBlock);
-							currentBlock = {
-								type: 'toolCall',
-								id: toolCall.id ?? '',
-								name: toolCall.function?.name ?? '',
-								arguments: {},
-								partialArgs: '',
-								streamIndex,
-							} satisfies StreamingToolCallBlock;
-							blocks.push(currentBlock);
-							stream.push({
-								type: 'toolcall_start',
-								contentIndex: indexOf(currentBlock),
-								partial: output,
-							});
+						const block = ensureToolCallBlock(toolCall);
+						if (!block.id && toolCall.id) {
+							block.id = toolCall.id;
+							toolCallBlocksById.set(toolCall.id, block);
 						}
-						const block = currentBlock?.type === 'toolCall' ? currentBlock : null;
-						if (block) {
-							if (!block.id && toolCall.id) block.id = toolCall.id;
-							if (!block.name && toolCall.function?.name) {
-								block.name = toolCall.function.name;
-							}
-							if (block.streamIndex === undefined && streamIndex !== undefined) {
-								block.streamIndex = streamIndex;
-							}
-							let toolDelta = '';
-							if (toolCall.function?.arguments) {
-								toolDelta = toolCall.function.arguments;
-								block.partialArgs = (block.partialArgs ?? '') + toolDelta;
-								block.arguments = parseStreamingJson(block.partialArgs);
-							}
-							stream.push({
-								type: 'toolcall_delta',
-								contentIndex: indexOf(block),
-								delta: toolDelta,
-								partial: output,
-							});
+						if (!block.name && toolCall.function?.name) {
+							block.name = toolCall.function.name;
 						}
+						let toolDelta = '';
+						if (toolCall.function?.arguments) {
+							toolDelta = toolCall.function.arguments;
+							block.partialArgs = (block.partialArgs ?? '') + toolDelta;
+							block.arguments = parseStreamingJson(block.partialArgs);
+						}
+						stream.push({
+							type: 'toolcall_delta',
+							contentIndex: indexOf(block),
+							delta: toolDelta,
+							partial: output,
+						});
 					}
 				}
 			}
 
-			finishCurrentBlock(currentBlock);
+			for (const block of blocks) {
+				finishBlock(block);
+			}
 
 			if (options?.signal?.aborted) {
 				throw new Error('Request was aborted');
