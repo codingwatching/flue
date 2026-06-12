@@ -7,6 +7,7 @@ import {
 	type Span,
 	type SpanContext,
 	type SpanOptions,
+	SpanKind,
 	type SpanStatus,
 	SpanStatusCode,
 	type TimeInput,
@@ -203,13 +204,17 @@ describe('createOpenTelemetryObserver', () => {
 		expect(tracer.spans.map((span) => span.name)).toEqual([
 			'flue.workflow report',
 			'flue.operation prompt',
-			'gen_ai.generate',
+			'chat sonnet',
 		]);
 		expect(tracer.spans[0]?.attributes).toMatchObject({
 			'flue.workflow.name': 'report',
 		});
 		expect(tracer.spans[0]?.options?.root).toBe(true);
 		expect(tracer.spans[0]?.attributes).not.toHaveProperty('flue.workflow.payload');
+		expect(tracer.spans[0]?.attributes).toMatchObject({
+			'flue.workflow.duration_ms': 40,
+		});
+		expect(tracer.spans[2]?.options?.kind).toBe(SpanKind.CLIENT);
 		expect(tracer.spans[2]?.attributes).toMatchObject({
 			'gen_ai.request.model': 'sonnet',
 			'gen_ai.usage.input_tokens': 2,
@@ -366,7 +371,7 @@ describe('createOpenTelemetryObserver', () => {
 			'flue.workflow report',
 			'flue.operation prompt',
 			'flue.compaction',
-			'gen_ai.generate',
+			'chat sonnet',
 		]);
 		expect(tracer.spans[0]?.attributes).toMatchObject({
 			'flue.event.start_index': 0,
@@ -392,8 +397,8 @@ describe('createOpenTelemetryObserver', () => {
 			'flue.event.end_index': 4,
 			'gen_ai.usage.input_tokens': 2,
 			'gen_ai.usage.output_tokens': 3,
-			'gen_ai.usage.total_tokens': 5,
-			'gen_ai.usage.cost_total': 0.01,
+			'flue.usage.total_tokens': 5,
+			'flue.usage.cost_total': 0.01,
 		});
 	});
 
@@ -498,8 +503,8 @@ describe('createOpenTelemetryObserver', () => {
 		expect(tracer.spans[1]?.parent).toBe(parent);
 		expect(tracer.spans[1]?.options?.root).toBe(false);
 		expect(tracer.spans[1]?.attributes).toMatchObject({
-			'flue.instance_id': 'agent-1',
-			'flue.dispatch_id': 'dispatch-1',
+			'flue.instance.id': 'agent-1',
+			'flue.dispatch.id': 'dispatch-1',
 		});
 	});
 
@@ -644,7 +649,7 @@ describe('createOpenTelemetryObserver', () => {
 		expect(tracer.spans.map((span) => span.name)).toEqual([
 			'flue.workflow report',
 			'flue.operation prompt',
-			'gen_ai.generate',
+			'chat sonnet',
 			'flue.tool lookup',
 			'flue.workflow report',
 		]);
@@ -792,7 +797,7 @@ describe('createOpenTelemetryObserver', () => {
 
 		expect(tracer.spans.map((span) => span.name)).toEqual([
 			'flue.operation prompt',
-			'gen_ai.generate',
+			'chat sonnet',
 			'flue.tool lookup',
 		]);
 		expect(tracer.spans.every((span) => span.ended)).toBe(true);
@@ -805,7 +810,7 @@ describe('createOpenTelemetryObserver', () => {
 		).toBe(true);
 	});
 
-	it('does not export failed task result content unless sanitization is enabled', () => {
+	it('does not export failed task result content unless content export is enabled', () => {
 		const tracer = new RecordingTracer();
 		const observe = createOpenTelemetryObserver({ tracer: tracer as never });
 		observe(
@@ -844,7 +849,63 @@ describe('createOpenTelemetryObserver', () => {
 		expect(tracer.spans[0]?.exceptions).toEqual(['Task failed.']);
 	});
 
-	it('exports generic terminal errors unless the sanitizer returns error content', () => {
+	it('parents agent-delegated task spans under the originating turn when turnId is present', () => {
+		const tracer = new RecordingTracer();
+		const observe = createOpenTelemetryObserver({ tracer: tracer as never });
+		observe(
+			{
+				type: 'operation_start',
+				instanceId: 'agent-1',
+				operationId: 'op-1',
+				operationKind: 'prompt',
+				v: 1,
+				eventIndex: 0,
+				timestamp: '2026-05-27T00:00:00.000Z',
+			},
+			{} as never,
+		);
+		observe(
+			{
+				type: 'turn_request',
+				instanceId: 'agent-1',
+				operationId: 'op-1',
+				turnId: 'turn-1',
+				purpose: 'agent',
+				model: 'sonnet',
+				provider: 'anthropic',
+				api: 'messages',
+				input: { messages: [] },
+				v: 1,
+				eventIndex: 1,
+				timestamp: '2026-05-27T00:00:00.010Z',
+			},
+			{} as never,
+		);
+		observe(
+			{
+				type: 'task_start',
+				instanceId: 'agent-1',
+				operationId: 'op-1',
+				turnId: 'turn-1',
+				taskId: 'task-1',
+				agent: 'summarizer',
+				prompt: 'summarize',
+				v: 1,
+				eventIndex: 2,
+				timestamp: '2026-05-27T00:00:00.020Z',
+			},
+			{} as never,
+		);
+
+		expect(tracer.spans.map((span) => span.name)).toEqual([
+			'flue.operation prompt',
+			'chat sonnet',
+			'flue.task summarizer',
+		]);
+		expect(tracer.spans[2]?.parent).toBe(tracer.spans[1]);
+	});
+
+	it('exports generic terminal errors unless the exportContent callback returns error content', () => {
 		const tracer = new RecordingTracer();
 		const observe = createOpenTelemetryObserver({ tracer: tracer as never });
 		observe(
@@ -942,11 +1003,11 @@ describe('createOpenTelemetryObserver', () => {
 		expect(tracer.spans[2]?.exceptions).toEqual(['Model turn failed.']);
 	});
 
-	it('traces standalone harness tools and captures content returned by the sanitizer', () => {
+	it('traces standalone harness tools and captures content returned by the exportContent callback', () => {
 		const tracer = new RecordingTracer();
 		const observe = createOpenTelemetryObserver({
 			tracer: tracer as never,
-			sanitize: (event) => event,
+			exportContent: (event) => event,
 		});
 		observe(
 			{
@@ -982,7 +1043,7 @@ describe('createOpenTelemetryObserver', () => {
 		expect(tracer.spans).toHaveLength(1);
 		expect(tracer.spans[0]?.options?.root).toBe(true);
 		expect(tracer.spans[0]?.attributes).toMatchObject({
-			'flue.instance_id': 'agent-1',
+			'flue.instance.id': 'agent-1',
 			'flue.tool.name': 'bash',
 			'flue.tool.arguments': '{"command":"pwd"}',
 			'flue.tool.result': 'ok',
@@ -990,13 +1051,13 @@ describe('createOpenTelemetryObserver', () => {
 		expect(tracer.spans[0]?.ended).toBe(true);
 	});
 
-	it('completes spans with metadata-only fallback when sanitization fails', () => {
+	it('completes spans with metadata-only fallback when the exportContent callback fails', () => {
 		const tracer = new RecordingTracer();
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 		const observe = createOpenTelemetryObserver({
 			tracer: tracer as never,
-			sanitize() {
-				throw new Error('sanitizer failed');
+			exportContent() {
+				throw new Error('exportContent failed');
 			},
 		});
 		observe(
@@ -1039,7 +1100,7 @@ describe('createOpenTelemetryObserver', () => {
 		consoleError.mockRestore();
 	});
 
-	it('uses shallow sanitizer copies for exported content without changing lifecycle correlation', () => {
+	it('uses shallow event copies for exported content without changing lifecycle correlation', () => {
 		const tracer = new RecordingTracer();
 		const startEvent = {
 			type: 'tool_start' as const,
@@ -1067,7 +1128,7 @@ describe('createOpenTelemetryObserver', () => {
 		};
 		const observe = createOpenTelemetryObserver({
 			tracer: tracer as never,
-			sanitize(event) {
+			exportContent(event) {
 				if (event.type === 'tool_start') {
 					event.toolCallId = 'changed';
 					event.args = { command: '<redacted>' };

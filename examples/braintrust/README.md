@@ -59,7 +59,7 @@ Workflows are the only Flue executions represented as runs. For direct or dispat
 
 ## Sensitive content
 
-Flue events are content-bearing. This custom `observe(...)` bridge intentionally sends workflow payloads/results, operation results, task prompts/results, tool arguments/results, model-visible messages, outputs, system prompts, tool definitions, and supported reasoning data to Braintrust. Add filtering or redaction before enabling it for production or sensitive workloads, and run it only where Braintrust retention and access policies are appropriate for that content. The official OpenTelemetry adapter defaults to metadata-only export and requires an application-owned sanitizer before exporting content. See [Observability](https://flueframework.com/docs/guide/observability/) for guidance.
+Flue events are content-bearing. This custom `observe(...)` bridge intentionally sends workflow payloads/results, operation results, task prompts/results, tool arguments/results, model-visible messages, outputs, system prompts, tool definitions, and supported reasoning data to Braintrust. Add filtering or redaction before enabling it for production or sensitive workloads, and run it only where Braintrust retention and access policies are appropriate for that content. The official OpenTelemetry adapter defaults to metadata-only export and requires an application-owned `exportContent` callback before exporting content. See [Observability](https://flueframework.com/docs/guide/observability/) for guidance.
 
 ## Files
 

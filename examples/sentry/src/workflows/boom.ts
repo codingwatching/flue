@@ -7,7 +7,7 @@
  *
  * The `observe(...)` subscriber in `app.ts` sees the `run_end`
  * event, reconstructs the Error, and calls `Sentry.captureException`
- * with `flue.run_id`, `flue.workflow`, and friends as tags.
+ * with `flue.run.id`, `flue.workflow`, and friends as tags.
  *
  * Invoke:
  *
@@ -17,7 +17,7 @@
  *
  * Expected:
  *   - HTTP 500 from Flue with a structured error envelope.
- *   - One issue in Sentry, tagged `flue.workflow=boom`, `flue.run_id=run_01...`.
+ *   - One issue in Sentry, tagged `flue.workflow=boom`, `flue.run.id=run_01...`.
  *
  * Notice: the handler does not import Sentry. It does not know that
  * error reporting exists. That separation is the whole point — every

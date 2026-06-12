@@ -20,13 +20,13 @@ After running this example with a Sentry DSN configured:
   capture — an exception if the log carries an `error` attribute, a
   message otherwise.
 - Sentry tags use a stable `flue.*` prefix, so pivoting on
-  `flue.run_id` in Sentry's search box finds every capture from a
+  `flue.run.id` in Sentry's search box finds every capture from a
   single Flue run.
 - A failing workflow run in Sentry can be replayed in full by feeding the
-  `flue.run_id` tag back into the Flue CLI:
+  `flue.run.id` tag back into the Flue CLI:
 
   ```
-  flue logs <flue.run_id>
+  flue logs <flue.run.id>
   ```
 
 This example contains workflows, so `runId`, `/runs`, and `flue logs` apply. Direct or dispatched agent interactions are not workflow runs; correlate them by agent instance/session, request identity, or `dispatchId` instead.
@@ -191,11 +191,11 @@ curl -X POST http://localhost:3583/workflows/explicit?wait=result \
 ```
 
 Each response includes a top-level `runId` field. That's the same id
-you'll see as the `flue.run_id` tag in Sentry.
+you'll see as the `flue.run.id` tag in Sentry.
 
 ### 5. Replay a captured run
 
-Take a `flue.run_id` from Sentry and feed it back to the CLI:
+Take a `flue.run.id` from Sentry and feed it back to the CLI:
 
 ```bash
 flue logs run_01HX...

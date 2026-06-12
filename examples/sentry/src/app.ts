@@ -112,11 +112,11 @@ observe((event) => {
 	// capture made from this bridge so an investigator can pivot
 	// from a Sentry issue to a Flue run via:
 	//
-	//   GET /runs/<flue.run_id>
+	//   GET /runs/<flue.run.id>
 	//
 	// or replay the run via the CLI:
 	//
-	//   flue logs <flue.run_id>
+	//   flue logs <flue.run.id>
 	//
 	// Owner-specific tags are attached when the event carries enough
 	// metadata; the run id is globally unique and resolves to its owner
@@ -136,7 +136,7 @@ observe((event) => {
 				durationMs: event.durationMs,
 				agentName: tags['flue.agent'],
 				workflowName: tags['flue.workflow'],
-				instanceId: tags['flue.instance_id'],
+				instanceId: tags['flue.instance.id'],
 			});
 			Sentry.captureException(reconstructError(event.error));
 		});
@@ -196,17 +196,17 @@ observe((event) => {
  *
  * Tag keys use the `flue.*` prefix to namespace them away from
  * Sentry's built-in tags and from any application tags the user
- * adds. Pivoting on `flue.run_id` in Sentry's search box is the
+ * adds. Pivoting on `flue.run.id` in Sentry's search box is the
  * fastest way to find every issue raised by a single Flue run.
  */
 function flueCorrelationTags(event: FlueEvent): Record<string, string> {
 	const tags: Record<string, string> = event.runId ? { ...runOwnerTags.get(event.runId) } : {};
-	if (event.runId) tags['flue.run_id'] = event.runId;
+	if (event.runId) tags['flue.run.id'] = event.runId;
 	if (event.harness) tags['flue.harness'] = event.harness;
 	if (event.session) tags['flue.session'] = event.session;
 	if (event.parentSession) tags['flue.parent_session'] = event.parentSession;
-	if (event.operationId) tags['flue.operation_id'] = event.operationId;
-	if (event.taskId) tags['flue.task_id'] = event.taskId;
+	if (event.operationId) tags['flue.operation.id'] = event.operationId;
+	if (event.taskId) tags['flue.task.id'] = event.taskId;
 	if (event.type === 'run_start') {
 		const ownerTags = { 'flue.workflow': event.workflowName };
 		Object.assign(tags, ownerTags);

@@ -140,7 +140,7 @@ The OpenTelemetry adapter represents that recovery handling as a separate workfl
 
 ### Export and interpret telemetry safely
 
-The adapter exports metadata and generic failure messages by default. To export content, pass an application-owned `sanitize(event)` callback. It receives a shallow event copy; return a sanitized event to export its supported content values, or return `undefined` to omit content from that event. Passing `sanitize: (event) => event` intentionally exports unsanitized content and is useful only when the configured exporter is appropriate for that data.
+The adapter exports metadata and generic failure messages by default. To export content, pass an application-owned `exportContent(event)` callback. It receives a shallow event copy; return a (typically sanitized) event to export its supported content values, or return `undefined` to omit content from that event. Passing `exportContent: (event) => event` intentionally exports unsanitized content and is useful only when the configured exporter is appropriate for that data.
 
 Exported event indexes can correlate trace activity with workflow history when persistence succeeds. For direct and dispatched agent activity, indexes are live per-context ordering values only; `dispatchId` remains the delivery identity for dispatched input. When aggregating model usage, sum model-turn leaf values rather than operation or compaction roll-ups. Nested duration values describe overlapping elapsed intervals and should not be summed.
 
