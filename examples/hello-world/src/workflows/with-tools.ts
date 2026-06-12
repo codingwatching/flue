@@ -2,10 +2,10 @@ import {
 	createAgent,
 	defineTool,
 	type FlueContext,
-	Type,
 	type WorkflowRouteHandler,
 } from '@flue/runtime';
 import { Bash, InMemoryFs } from 'just-bash';
+import * as v from 'valibot';
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 
@@ -31,13 +31,12 @@ export async function run({ init }: FlueContext) {
 	const calculator = defineTool({
 		name: 'calculator',
 		description: 'Perform arithmetic. Returns the numeric result as a string.',
-		parameters: Type.Object({
-			expression: Type.String({ description: 'A math expression like "2 + 3"' }),
+		parameters: v.object({
+			expression: v.pipe(v.string(), v.description('A math expression like "2 + 3"')),
 		}),
-		execute: async (args) => {
+		execute: async ({ expression }) => {
 			// Simple eval for test purposes (only supports basic arithmetic)
-			const expr = args.expression as string;
-			const result = Function(`"use strict"; return (${expr})`)();
+			const result = Function(`"use strict"; return (${expression})`)();
 			return String(result);
 		},
 	});

@@ -2,9 +2,9 @@ import {
 	createAgent,
 	defineTool,
 	type FlueContext,
-	Type,
 	type WorkflowRouteHandler,
 } from '@flue/runtime';
+import * as v from 'valibot';
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 
@@ -13,7 +13,7 @@ const agent = createAgent(() => ({ model: 'anthropic/claude-haiku-4-5' }));
 const lookup = defineTool({
 	name: 'lookup_weather',
 	description: 'Look up current weather for a city.',
-	parameters: Type.Object({ city: Type.String() }),
+	parameters: v.object({ city: v.string() }),
 	execute: async ({ city }) => `${city}: sunny, 72 F`,
 });
 

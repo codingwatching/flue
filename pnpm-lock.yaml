@@ -126,6 +126,9 @@ importers:
       hono:
         specifier: ^4.7.0
         version: 4.12.22
+      valibot:
+        specifier: ^1.0.0
+        version: 1.4.0(typescript@6.0.3)
     devDependencies:
       '@flue/cli':
         specifier: workspace:*
@@ -157,6 +160,9 @@ importers:
       just-bash:
         specifier: ^3.0.1
         version: 3.0.1
+      valibot:
+        specifier: ^1.0.0
+        version: 1.4.0(typescript@6.0.3)
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20260602.1

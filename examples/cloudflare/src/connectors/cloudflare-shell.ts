@@ -11,13 +11,12 @@ import {
 	WorkspaceFileSystem,
 } from '@cloudflare/shell';
 import { stateTools } from '@cloudflare/shell/workers';
-import {
-	type FileStat,
-	type SandboxFactory,
-	type SessionEnv,
-	type SessionToolFactory,
-	type ShellResult,
-	Type,
+import type {
+	FileStat,
+	SandboxFactory,
+	SessionEnv,
+	SessionToolFactory,
+	ShellResult,
 } from '@flue/runtime';
 import { getCloudflareContext } from '@flue/runtime/cloudflare';
 
@@ -178,15 +177,22 @@ function adaptStat(s: CfFsStat): FileStat {
 	};
 }
 
-const CodeParams = Type.Object({
-	code: Type.String({
-		description:
-			'A single async arrow function with the signature `async () => { ... return result; }`. ' +
-			'Inside the body, call `state.*` to operate on the workspace (see the type declarations ' +
-			'below). The function executes in an isolated Worker — no network, no DOM, no imports. ' +
-			'Return whatever JSON-serializable value you want back; it is returned as the tool result.',
-	}),
-});
+// Raw JSON Schema: connector tools feed the agent loop directly, which
+// accepts plain JSON Schema parameter documents.
+const CodeParams = {
+	type: 'object',
+	properties: {
+		code: {
+			type: 'string',
+			description:
+				'A single async arrow function with the signature `async () => { ... return result; }`. ' +
+				'Inside the body, call `state.*` to operate on the workspace (see the type declarations ' +
+				'below). The function executes in an isolated Worker — no network, no DOM, no imports. ' +
+				'Return whatever JSON-serializable value you want back; it is returned as the tool result.',
+		},
+	},
+	required: ['code'],
+};
 
 function createCodeTool(executor: DynamicWorkerExecutor, stateProvider: ResolvedProvider) {
 	return {

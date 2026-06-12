@@ -5,7 +5,8 @@
 	"dependencies": {
 		"@flue/runtime": "workspace:*",
 		"braintrust": "^3.9.0",
-		"hono": "^4.7.0"
+		"hono": "^4.7.0",
+		"valibot": "^1.0.0"
 	},
 	"devDependencies": {
 		"@flue/cli": "workspace:*"

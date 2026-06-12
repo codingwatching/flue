@@ -4,7 +4,8 @@ import {
 	fauxToolCall,
 	registerFauxProvider,
 } from '@earendil-works/pi-ai';
-import { createAgent, defineTool, Type } from '@flue/runtime';
+import { createAgent, defineTool } from '@flue/runtime';
+import * as v from 'valibot';
 import { bot } from '../chat.ts';
 
 export default createAgent(() => {
@@ -41,9 +42,9 @@ export default createAgent(() => {
 			defineTool({
 				name: 'reply_to_chat_thread',
 				description: 'Post a response into the originating Chat SDK thread.',
-				parameters: Type.Object({
-					threadId: Type.String(),
-					text: Type.String(),
+				parameters: v.object({
+					threadId: v.string(),
+					text: v.string(),
 				}),
 				execute: async ({ threadId, text }) => {
 					await bot.thread(threadId).post(text);
