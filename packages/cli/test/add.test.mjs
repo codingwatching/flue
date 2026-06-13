@@ -51,6 +51,7 @@ before(async () => {
 			'google-chat': 'channel--google-chat.md',
 			linear: 'channel--linear.md',
 			telegram: 'channel--telegram.md',
+			whatsapp: 'channel--whatsapp.md',
 		};
 		const file = slug ? files[slug] : undefined;
 		if (!file) {
@@ -92,8 +93,22 @@ describe('flue add', () => {
 			result.stderr,
 			/flue add telegram\s+channel\s+https:\/\/core\.telegram\.org\/bots\/api/,
 		);
+		assert.match(
+			result.stderr,
+			/flue add whatsapp\s+channel\s+https:\/\/developers\.facebook\.com\/docs\/whatsapp\/cloud-api/,
+		);
 		assert.ok(result.stderr.includes('flue add <url> --category sandbox'));
 		assert.ok(result.stderr.includes('flue add <url> --category channel'));
+	});
+
+	it('prints the WhatsApp channel recipe', async () => {
+		const result = await runCli(['add', 'whatsapp', '--print']);
+
+		assert.equal(result.code, 0);
+		assert.ok(result.stdout.includes('@flue/whatsapp'));
+		assert.ok(result.stdout.includes('@kapso/whatsapp-cloud-api@^0.2.1'));
+		assert.ok(result.stdout.includes('/channels/whatsapp/webhook'));
+		assert.ok(result.stdout.includes('X-Hub-Signature-256'));
 	});
 
 	it('prints the Teams channel recipe with the Workers-compatible Fetch path', async () => {

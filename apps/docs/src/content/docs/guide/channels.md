@@ -15,6 +15,7 @@ your application decide what happens next. Flue provides ingress packages for:
 | Google Chat | `@flue/google-chat` | `/channels/<file>/interactions`, `/channels/<file>/events` |
 | Linear      | `@flue/linear`      | `/channels/<file>/webhook`                                 |
 | Telegram    | `@flue/telegram`    | `/channels/<file>/webhook`                                 |
+| WhatsApp    | `@flue/whatsapp`    | `/channels/<file>/webhook`                                 |
 
 The packages own signature verification, body limits, provider handshakes,
 identity checks, typed event normalization, and acknowledgement behavior. They
@@ -32,6 +33,7 @@ flue add teams --print | codex
 flue add google-chat --print | codex
 flue add linear --print | codex
 flue add telegram --print | codex
+flue add whatsapp --print | codex
 ```
 
 The recipe installs the ingress package and an established provider SDK or
@@ -53,8 +55,9 @@ See the provider guides for [GitHub](/docs/guide/channels/github/),
 [Discord](/docs/guide/channels/discord/),
 [Microsoft Teams](/docs/guide/channels/teams/),
 [Google Chat](/docs/guide/channels/google-chat/),
-[Linear](/docs/guide/channels/linear/), and
-[Telegram](/docs/guide/channels/telegram/), or
+[Linear](/docs/guide/channels/linear/),
+[Telegram](/docs/guide/channels/telegram/),
+[WhatsApp](/docs/guide/channels/whatsapp/), or
 [build a custom channel](/docs/guide/build-your-own-channel/).
 
 ## File-based routing
@@ -71,6 +74,7 @@ src/channels/google-chat.ts
                            /channels/google-chat/events
 src/channels/linear.ts   -> /channels/linear/webhook
 src/channels/telegram.ts -> /channels/telegram/webhook
+src/channels/whatsapp.ts -> /channels/whatsapp/webhook
 ```
 
 The filename defines the channel namespace. Provider packages define fixed,

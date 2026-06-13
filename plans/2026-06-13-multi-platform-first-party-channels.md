@@ -2014,6 +2014,201 @@ Final reference gap audit:
   ingress capabilities and do not justify Flue-owned state or rendering.
 - No justified verified HTTP ingress gap remains.
 
+### WhatsApp Business Cloud — 2026-06-13
+
+Status:
+
+- Complete.
+
+Reference capability brief:
+
+- The pinned high-level adapter documentation describes Meta GET verification
+  and signed POST webhooks, direct and group conversations, text and media
+  messages, locations, shared contacts, interactive replies, reactions,
+  posting, read receipts, typing indicators, rich interactive outbound
+  messages, message chunking, and the Cloud API's lack of message-history
+  retrieval.
+- No reference implementation, architecture, types, package declarations,
+  fixtures, payloads, snapshots, sample messages, or tests were consulted.
+
+Primary sources:
+
+- Meta's current WhatsApp Business Platform webhook overview and create-endpoint
+  documentation for TLS, GET challenge validation, exact-body
+  `X-Hub-Signature-256` verification, JSON encoding, the 3 MB payload maximum,
+  batches of up to 1000 updates, duplicate delivery, and retries for up to
+  seven days.
+- Meta's current `messages` webhook reference and the dedicated text, audio,
+  document, image, video, sticker, location, contacts, interactive, button,
+  reaction, status, edit, revoke, group, and unsupported message references.
+- Meta's current outbound text-message and Message API documentation.
+- Meta's current Graph API changelog, which identifies v25.0 as the current
+  Graph version on 2026-06-13.
+- Current `facebook-nodejs-business-sdk@24.0.1`,
+  `whatsapp@0.0.5-Alpha`, and community client package metadata.
+- Current `@kapso/whatsapp-cloud-api@0.2.1` package metadata, declarations,
+  README, and published root-client source.
+
+Clean-room affirmation:
+
+- All public types, normalized event families, synthetic webhook bodies, fake
+  ids, timestamps, signatures, assertions, and tests were designed from Meta's
+  primary documentation and Flue's existing channel contract. Nothing was
+  copied or translated from Chat SDK source, architecture, types, fixtures,
+  payloads, snapshots, sample messages, or tests.
+
+Decisions:
+
+- Add `@flue/whatsapp` and `flue add whatsapp`.
+- Publish GET and POST `/channels/<file>/webhook` routes. GET handles Meta's
+  verification challenge internally; POST verifies exact request bytes before
+  parsing or application behavior.
+- Require an app secret, verify token, fixed WhatsApp Business Account id, and
+  fixed business phone-number id. Signed deliveries for another configured
+  business identity receive `403`.
+- Invoke the application callback once per verified HTTP delivery with an
+  ordered `delivery.events` array. Preserve every entry, change, message, and
+  status rather than collapsing Meta batches or hiding partial-side-effect
+  risks from the application.
+- Normalize message, status, and unknown-change events. Message variants cover
+  text, media, locations, shared contacts, interactive replies, legacy
+  buttons, reactions, revocations, unsupported payloads, and future unknown
+  message types.
+- Preserve message and status ids plus entry, change, and item positions for
+  application-owned duplicate admission. Do not claim replay protection or
+  deduplication because Meta supplies no signed delivery timestamp or
+  package-level durable store.
+- Define separate individual and group conversation identities. Individual
+  identity uses the inbound `from` or status `recipient_id` value accepted by
+  the send API. Preserve Meta's distinct `wa_id` as sender metadata because
+  the official reference warns that it may differ from the phone number.
+- Omit authenticated media download URLs from normalized media. Preserve the
+  stable asset id, MIME type, hash, caption, filename, and voice flag; the full
+  verified provider object remains under `raw` for trusted application code.
+- Keep normal Hono and Fetch response behavior: `undefined` becomes an empty
+  `200`, JSON-compatible values become response bodies, and `Response` values
+  pass through.
+- Use the full project-owned `@kapso/whatsapp-cloud-api` root client for
+  outbound behavior. Configure Graph v25.0 explicitly. The package is
+  Fetch-based, depends only on Zod, accepts an injected Fetch transport, and
+  executes in Node and workerd without `nodejs_compat`.
+
+Tests:
+
+- Added original synthetic direct and group messages, text, media, locations,
+  shared contacts, interactive list replies, reactions and reaction removal,
+  revocations, unsupported types, future message types, outbound statuses,
+  unknown change fields, and empty deliveries with distinct fake ids, phone
+  numbers, timestamps, names, and ordering.
+- Covered valid and changed GET verification tokens, duplicate query
+  parameters, exact-body HMAC verification, changed Unicode bytes, missing and
+  malformed signatures, wrong content types, malformed JSON and envelopes,
+  body limits, fixed business-account and phone-number mismatches, response
+  serialization, Hono status control, handler failure, and canonical
+  individual and group keys.
+- Added permanent workerd execution of GET verification, Web Crypto HMAC
+  validation, changed-body rejection, and batch normalization without Node
+  compatibility flags.
+- Added permanent workerd execution of the real
+  `@kapso/whatsapp-cloud-api` `WhatsAppClient`, exercising individual and
+  group `messages.sendText()` calls against an injected fake Fetch transport
+  without Node compatibility flags.
+- Added Node execution of the same real client request path against an
+  injected fake Fetch transport.
+
+Validation:
+
+- Package build, strict typecheck, eight Node protocol tests, and workerd
+  ingress tests pass.
+- Example strict typecheck, real client Node and workerd tests, Node build, and
+  Cloudflare build pass. Both builds discover exactly one `whatsapp` channel.
+- A built Node server returned the configured GET challenge with `200`, empty
+  `200` for an original signed unknown-field delivery, and `401` for the same
+  POST with a changed signature.
+- Documentation check passes.
+- Documentation production build passes and renders both WhatsApp pages.
+- The real `flue add` CLI test suite passes and verifies the WhatsApp route,
+  package, SDK dependency, and signature guidance.
+- Scoped Biome lint and whitespace validation pass.
+- Prepared publish docs were generated for all public packages.
+- The packed package contains the intended runtime declarations, JavaScript,
+  README, license metadata, and prepared docs without an outbound client or
+  model tool.
+- A clean strict TypeScript consumer compiles against the packed tarball and
+  narrows message, status, and unknown events plus canonical identity.
+
+Focused review:
+
+- Reviewed the complete provider implementation for GET token validation,
+  exact-byte HMAC ordering, body limits, fixed WABA and phone identity,
+  all-or-nothing callback invocation, batch position preservation, direct and
+  group identity, media capability boundaries, response handling, SDK
+  request construction, emitted declarations, and documentation.
+- Added actual Node execution of the outbound SDK path after review found that
+  the initial evidence covered a Node bundle but only workerd runtime
+  execution.
+- Corrected the API wording so the implementation's exact default is stated as
+  `3 * 1024 * 1024` bytes without converting Meta's prose "3 MB" into a more
+  precise provider claim.
+- No unresolved correctness findings remain.
+
+Deviations:
+
+- The initial brief treated direct Graph API Fetch as the baseline
+  Cloudflare path. A maintained community SDK now exposes a full Fetch-based
+  root client, accepts an injected transport, has no Node runtime dependency,
+  builds in both Flue targets, and executes its real request path under
+  workerd. The canonical recipe therefore exports that full client instead of
+  maintaining a narrow example-only Fetch wrapper.
+- The plan did not prescribe callback cardinality for Meta batches. A single
+  callback per verified delivery preserves the complete retry unit and lets
+  application code decide how to handle partial side effects. Invoking a
+  callback independently for each item would hide the fact that one failure
+  retries the entire signed POST.
+- The plan left account and phone-number identity constraints open. Both are
+  required because one app secret can authenticate webhook traffic for more
+  than one Meta business asset; a fixed channel should not silently accept a
+  different WABA or phone number.
+
+Deferrals:
+
+- Meta app creation, system-user token provisioning, webhook subscription,
+  WABA or phone-number overrides, token rotation, and multi-tenant installation
+  state remain application and deployment concerns.
+- Account alerts, template lifecycle, business capability, phone-number
+  quality, history synchronization, user preferences, and other non-`messages`
+  fields remain explicit verified unknown changes until a Flue use case
+  justifies a stable projection.
+- Edit delivery is currently documented by Meta as temporarily unsupported and
+  emitted through the unsupported-message form. Flue does not promise a stable
+  edit projection until Meta restores the protocol.
+- Flow data-endpoint encryption and other server utilities remain outside the
+  channel package. The canonical project path uses the SDK root export and
+  does not require its `/server` subpath.
+- Read receipts, typing indicators, reactions, media retrieval, templates,
+  buttons, lists, Flows, message chunking, and broader Graph API operations
+  remain project-owned SDK behavior rather than Flue abstractions.
+- No live Meta app, access token, WABA, phone number, webhook, or provider
+  request was used in automated or manual validation.
+
+Final reference gap audit:
+
+- Reopened only the pinned high-level WhatsApp adapter README after
+  implementation; no reference source, declarations, fixtures, payloads,
+  sample messages, or tests were used.
+- Verified text, image, document, audio, voice, video, sticker, location,
+  interactive reply, reaction, direct-message, and group-message ingress are
+  represented. Shared contacts and current Meta revoke and unsupported forms
+  are also covered.
+- Posting, rich buttons and lists, reactions, read state, typing, media,
+  templates, and other outbound capabilities remain available through the
+  project-owned full SDK.
+- Buffered streaming and automatic 4096-character chunking are application
+  presentation policies, not verified ingress contracts.
+- Meta does not expose historical Cloud API message retrieval, so Flue does
+  not add process-local history or claim a history API.
+- No justified verified HTTP ingress gap remains.
+
 ## Implementation log template
 
 Append one section per provider while implementing:
