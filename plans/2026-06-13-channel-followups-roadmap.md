@@ -599,6 +599,209 @@ Focused review:
 - No unresolved correctness, security, packaging, Cloudflare, or developer
   experience findings remain.
 
+### Resend implementation — 2026-06-13
+
+Status:
+
+- Complete.
+
+Primary sources:
+
+- Resend webhook management, signature verification, retry/replay,
+  `email.received`, inbound email, content retrieval, attachment, and reply
+  documentation.
+- Official `resend` v6.12.4 package metadata, declarations, runtime artifact,
+  and Standard Webhooks dependency.
+- Standard Webhooks verification specification and the official JavaScript
+  implementation used by Resend.
+- Current Cloudflare Workers Fetch and workerd-testing documentation.
+
+Clean-room affirmation:
+
+- The design and fixtures derive from Resend's primary specifications and
+  original synthetic payloads. No third-party adapter implementation, types,
+  fixtures, payloads, snapshots, or tests are being copied or translated.
+
+Eligibility:
+
+- Eligible in principle for stateless HTTPS webhooks. Resend signs the exact
+  request body plus `svix-id` and `svix-timestamp`, applies a five-minute
+  timestamp tolerance through its official verifier, and delivers at least
+  once with exponential retries and manual replay.
+- The `svix-id` header is the stable delivery identifier for
+  application-owned deduplication. Ordering is not guaranteed.
+- `email.received` contains address, message, subject, and attachment metadata,
+  but intentionally omits bodies, complete headers, and attachment content.
+  Applications retrieve those later through the project-owned Resend client.
+- The official SDK uses global Fetch for ordinary API calls and pure
+  JavaScript Standard Webhooks verification. Its package is named and
+  engine-constrained for Node, so actual verifier and client execution in
+  workerd without `nodejs_compat` is a completion gate rather than an inferred
+  compatibility claim.
+
+Design:
+
+- Add `@flue/resend`, `examples/resend-channel`, `flue add resend`, a setup
+  guide, and an API reference.
+- Publish one fixed `POST /webhook` route.
+- Accept the project-owned official Resend `client` and `webhookSecret`.
+  Verification uses `client.webhooks.verify()` over the exact raw string and
+  original `svix-*` headers before application code runs.
+- Deliver the explicitly supported SDK event variants as their provider-native
+  typed payloads. Validate every retained field before exposing those types and
+  preserve other verified event types through an explicit unknown-event
+  wrapper.
+- Pass header-derived delivery metadata alongside the event in the extensible
+  callback object. Preserve the unique delivery id and signed timestamp
+  without claiming built-in deduplication.
+- Preserve the established response contract: no value becomes empty `200`,
+  JSON-compatible values become JSON, and ordinary Hono or Fetch responses
+  pass through. Resend documents no universal numeric response deadline, so
+  the package will not invent one.
+- Expose a configurable body limit and require JSON media type. Invalid,
+  missing, stale, or malformed authentication receives `400`; oversized
+  requests receive `413`; unsupported media receives `415`.
+- Do not add a package-level conversation helper. `message_id` identifies one
+  received message and supports `In-Reply-To`, but later messages in the same
+  email thread have different message ids and root-thread reconstruction
+  requires headers that are not present in the webhook.
+
+Dependencies and example:
+
+- `@flue/resend` depends directly on Hono and peers on `resend`. A required
+  `@types/node` peer is expected because the official SDK's public attachment
+  declarations expose `Buffer`; the clean packed-consumer check will confirm
+  the final requirement.
+- The editable example exports the official client, handles
+  `email.received`, dispatches using an explicitly local message-based agent
+  instance id, and defines a narrow tool that retrieves the already-bound
+  received email. Outbound sending and reply policy remain application-owned.
+- Node and workerd tests will execute the same exported client factory against
+  a fake Fetch destination and fail any unexpected network access.
+
+Non-goals:
+
+- Receiving-domain setup, MX records, webhook registration, secret rotation,
+  API-key storage, deduplication, ordering, replay persistence, attachment
+  storage, outbound composition, and reply authorization.
+- Treating a Resend message id, email id, recipient, webhook delivery id, or
+  signing secret as an authorization capability.
+- Polling through the Resend CLI or adding a general inbound-email abstraction
+  shared with unrelated providers.
+
+Foundation reflection to revisit after implementation:
+
+- Whether a second official SDK-owned verifier strengthens the existing
+  provider-local exception established by Stripe without requiring shared
+  channel machinery.
+- Whether delivery metadata belongs cleanly beside `event` in the callback
+  object and whether any existing provider would gain a concrete correctness
+  benefit from the same shape.
+- Whether a Fetch-based SDK whose declarations and package metadata remain
+  Node-oriented exposes a new example, peer-type, or workerd-validation
+  requirement beyond the Stripe and Notion precedents.
+
+Implementation:
+
+- Added `@flue/resend` with one fixed `POST /webhook` route, official SDK
+  verification over exact UTF-8 request bytes, signed delivery metadata,
+  provider-native known event variants, verified unknown-event normalization,
+  body limiting, structural event validation, and the established
+  Hono-compatible result contract.
+- Added original Node and workerd protocol suites. They cover exact bytes,
+  missing, malformed, incorrect, stale, and future authentication, known email,
+  contact, and domain families, malformed known payloads, future event types,
+  media type, invalid UTF-8, declared and streamed body limits, delivery
+  identity, handler results, constructor validation, and route publication.
+- Added `examples/resend-channel` with the official client, a shared client
+  factory, `email.received` dispatch, an explicitly local message-based agent
+  instance id, a narrow received-email retrieval tool, and Node and workerd
+  fake-Fetch tests.
+- Added `flue add resend`, the Resend connector recipe, setup and API docs,
+  navigation and channel overview entries, README, changelog, and publish
+  wiring.
+
+Validation:
+
+- Package build, strict typecheck, nine Node tests, and two workerd ingress
+  tests pass. Workerd executes the official Resend verifier over exact bytes
+  with `process` and `Buffer` explicitly unavailable.
+- Example strict typecheck, Node fake-client test, workerd fake-client test,
+  Node build, and Cloudflare target build pass. The workerd client test
+  executes `emails.receiving.get()` through the official SDK with `process`
+  and `Buffer` explicitly unavailable.
+- A separate clean workerd consumer installed only the packed
+  `@flue/resend`, `resend`, declaration peers, and the Workers test runner. It
+  executed both verification and the receiving-email Fetch path without React
+  runtime packages, Node globals, or `nodejs_compat`.
+- A built Node application returned an empty `200` for an original locally
+  signed future event and `400` for the same signature over altered bytes.
+- The full CLI suite passes: 53 Node tests and 24 Vitest tests. The real built
+  CLI returns the Resend recipe through the locally built connector website.
+- Documentation check and production build pass. The connector website build
+  serves `/cli/connectors/resend.md`.
+- Publish preparation and package packing pass. The tarball contains 95
+  intended distribution, documentation, README, license, and manifest files.
+- A clean strict TypeScript consumer installed only the packed package,
+  `resend`, and the required declaration peers; custom Hono environment types
+  compiled and the constructor imported at runtime.
+- Formatting, whitespace, and local credential-pattern review found no real
+  provider secret or authentication logging. No test or build contacted
+  Resend.
+
+Corrections and deviations:
+
+- The official SDK's public declarations import React types and expose
+  `Buffer`, despite the verified Fetch and Standard Webhooks runtime paths
+  requiring neither React nor Node. `@flue/resend` therefore declares
+  compatible `@types/react` and `@types/node` peers, and the recipe explains
+  that both are declaration-only requirements.
+- The package pins its known event-name union rather than aliasing the SDK's
+  entire evolving `WebhookEventPayload`. This prevents a compatible future SDK
+  minor from advertising a newly added event as provider-native before this
+  package validates its payload; other verified event types remain observable
+  through the unknown wrapper.
+- Resend's official Cloudflare documentation supports the SDK, but some
+  helpers are not uniformly edge-safe. In particular, wrapped inbound
+  forwarding can use `Buffer`. The example intentionally demonstrates only the
+  receiving-email retrieval path proven in workerd and does not make a blanket
+  claim about every SDK method.
+- The first direct `flue add resend --print` check used the deployed registry
+  and correctly could not see unreleased repository content. The final check
+  points the built CLI at the locally built connector website through
+  `FLUE_REGISTRY_URL`, matching the pre-release integration contract.
+
+Foundation reflection:
+
+- Resend reinforces that accepting a project-owned provider SDK for verified
+  ingress is a provider-local exception justified when the official verifier
+  owns timestamp tolerance, signature rotation syntax, and native event types
+  and actually executes in both required runtimes. No shared verifier
+  abstraction is warranted.
+- Delivery metadata fits naturally beside `event` in the extensible callback
+  object. Existing channels already expose equivalent provider metadata either
+  on normalized events or delivery objects; no concrete failure requires
+  changing their public shapes.
+- The repeated SDK declaration friction from Stripe, Notion, and Resend is
+  best caught by packed strict-consumer checks. The exact peer set remains
+  provider-specific, so a shared runtime or package abstraction would not
+  improve correctness.
+- Fixed discovery, Hono context typing, response handling, project-owned
+  clients and tools, and Node/workerd validation all held. No shared channel
+  machinery change is justified.
+
+Focused review:
+
+- Independent review found that the standard `Response` passthrough contract
+  could let an application return `202` or `204` without realizing Resend
+  retries every status other than `200`. The package intentionally preserves
+  the normal Hono response API so applications can request redelivery. Source
+  JSDoc, the test name, README, guide, API reference, and connector recipe now
+  state that only `200` acknowledges delivery and non-`200` responses
+  intentionally trigger retry.
+- No unresolved correctness, security, packaging, Cloudflare, or developer
+  experience findings remain.
+
 ## 6. Keep These As Separate Product Decisions
 
 ### Generic HTTP or webhook adapter

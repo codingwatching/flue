@@ -47,6 +47,7 @@ before(async () => {
 			github: 'channel--github.md',
 			stripe: 'channel--stripe.md',
 			notion: 'channel--notion.md',
+			resend: 'channel--resend.md',
 			slack: 'channel--slack.md',
 			discord: 'channel--discord.md',
 			teams: 'channel--teams.md',
@@ -85,6 +86,7 @@ describe('flue add', () => {
 		assert.match(result.stderr, /flue add github\s+channel\s+https:\/\/github\.com/);
 		assert.match(result.stderr, /flue add stripe\s+channel\s+https:\/\/stripe\.com/);
 		assert.match(result.stderr, /flue add notion\s+channel\s+https:\/\/developers\.notion\.com/);
+		assert.match(result.stderr, /flue add resend\s+channel\s+https:\/\/resend\.com/);
 		assert.match(result.stderr, /flue add slack\s+channel\s+https:\/\/slack\.com/);
 		assert.match(
 			result.stderr,
@@ -147,6 +149,22 @@ describe('flue add', () => {
 		assert.ok(result.stdout.includes('verification_token'));
 		assert.ok(result.stdout.includes('X-Notion-Signature'));
 		assert.ok(result.stdout.includes('without `nodejs_compat`'));
+	});
+
+	it('prints the Resend recipe with signed ingress and fake-client guidance', async () => {
+		const result = await runCli(['add', 'resend', '--print']);
+
+		assert.equal(result.code, 0);
+		assert.ok(result.stdout.includes('@flue/resend'));
+		assert.ok(result.stdout.includes('resend@6.12.4'));
+		assert.ok(result.stdout.includes('@types/node'));
+		assert.ok(result.stdout.includes('@types/react'));
+		assert.ok(result.stdout.includes('/channels/resend/webhook'));
+		assert.ok(result.stdout.includes('svix-signature'));
+		assert.ok(result.stdout.includes('delivery.id'));
+		assert.ok(result.stdout.includes('without `nodejs_compat`'));
+		assert.ok(result.stdout.includes('fake transport'));
+		assert.ok(result.stdout.includes('Never create a receiving domain'));
 	});
 
 	it('prints the Twilio recipe with the Workers-compatible Fetch path', async () => {
