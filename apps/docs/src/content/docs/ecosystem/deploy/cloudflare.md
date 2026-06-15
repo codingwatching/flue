@@ -88,10 +88,16 @@ Keep deployed migration entries in order. When you add an agent or workflow late
 
 ```bash
 npx flue build --target cloudflare
-npx wrangler deploy
+npx wrangler deploy --config dist/my-flue-worker/wrangler.json
 ```
 
-`flue build --target cloudflare` compiles your project into a `./dist` directory containing a Cloudflare Workers-compatible artifact. `wrangler deploy` pushes it live.
+`flue build --target cloudflare` compiles your project into a `./dist` directory containing a Cloudflare Workers-compatible artifact. Deploy the generated Wrangler config from the build output, not the source-root `wrangler.jsonc`, so Wrangler uses Flue's generated entrypoint, merged bindings, and Cloudflare Vite output. The generated directory is named from your Worker name, so this example writes `dist/my-flue-worker/wrangler.json`.
+
+Before deploying, run the same generated config through Wrangler's dry run:
+
+```bash
+npx wrangler deploy --dry-run --config dist/my-flue-worker/wrangler.json
+```
 
 ### Serving assets from the same Worker
 
@@ -129,7 +135,7 @@ For a deployed Worker, add secrets through Wrangler rather than treating a local
 ```bash
 npx wrangler secret put ANTHROPIC_API_KEY
 npx flue build --target cloudflare
-npx wrangler deploy
+npx wrangler deploy --config dist/my-flue-worker/wrangler.json
 ```
 
 For CI or a managed deployment pipeline, `wrangler deploy --secrets-file <path>` is also available when your pipeline provides a protected secrets file.
@@ -537,7 +543,7 @@ npx flue build --target cloudflare
 
 # Configure a deployed secret interactively, then deploy
 npx wrangler secret put ANTHROPIC_API_KEY
-npx wrangler deploy
+npx wrangler deploy --config dist/my-agent/wrangler.json
 ```
 
 Every workflow that exports `route` gets an HTTP endpoint automatically. The middleware may authenticate the request and call `next()` to admit it. The route follows the pattern `/workflows/<name>` — for example, `.flue/workflows/translate.ts` becomes `/workflows/translate`.
