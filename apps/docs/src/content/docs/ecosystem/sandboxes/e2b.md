@@ -26,7 +26,7 @@ pnpm exec flue add sandbox e2b
 ```ts
 import { Sandbox } from 'e2b';
 import { createAgent } from '@flue/runtime';
-import { e2b } from '../connectors/e2b';
+import { e2b } from '../sandboxes/e2b';
 
 const sandbox = await Sandbox.create();
 const agent = createAgent(() => ({

@@ -53,7 +53,7 @@ These are the things that aren't obvious from the spec or the example.
   target uses Durable Object SQLite automatically and rejects a `db.ts` file at
   build time — do not build a database adapter for a Cloudflare project.
 - **File location.** The adapter is a single source-root `db.ts`, not a file
-  under `connectors/`. Select the first existing source directory in this
+  under `sandboxes/`. Select the first existing source directory in this
   order: `<root>/.flue/`, `<root>/src/`, then `<root>/`, and write `db.ts`
   there. Flue discovers it at build time and wires the default export into the
   generated Node server. Ask the user if their layout is unusual.

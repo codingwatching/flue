@@ -34,7 +34,7 @@ A few things worth knowing about Modal that shape this adapter:
 ## Where to write the file
 
 Select the first existing source directory: `<root>/.flue/`, then `<root>/src/`,
-then `<root>/`. Write the adapter to `<source-dir>/connectors/modal.ts`.
+then `<root>/`. Write the adapter to `<source-dir>/sandboxes/modal.ts`.
 
 If neither feels right (uncommon layout, multiple workspaces, etc.), ask the
 user before writing.
@@ -57,7 +57,7 @@ Write this file verbatim. Do not "improve" it — it conforms to the published
  * @example
  * ```typescript
  * import { ModalClient } from 'modal';
- * import { modal } from './connectors/modal';
+ * import { modal } from './sandboxes/modal';
  *
  * const client = new ModalClient();
  * const app = await client.apps.fromName('my-app', { createIfMissing: true });
@@ -73,7 +73,7 @@ import { createSandboxSessionEnv } from '@flue/runtime';
 import type { SandboxApi, SandboxFactory, SessionEnv, FileStat } from '@flue/runtime';
 import type { Sandbox as ModalSandbox } from 'modal';
 
-export interface ModalConnectorOptions {
+export interface ModalAdapterOptions {
 	/**
 	 * Default working directory for `exec()` calls when the caller doesn't
 	 * pass one. Modal sandboxes don't have a strict notion of a "default
@@ -245,7 +245,7 @@ class ModalSandboxApi implements SandboxApi {
  * The user owns the Sandbox lifecycle; Flue wraps it into a SessionEnv
  * for agent use.
  */
-export function modal(sandbox: ModalSandbox, options?: ModalConnectorOptions): SandboxFactory {
+export function modal(sandbox: ModalSandbox, options?: ModalAdapterOptions): SandboxFactory {
 	return {
 		async createSessionEnv(): Promise<SessionEnv> {
 			const sandboxCwd = options?.cwd ?? '/';
@@ -306,7 +306,7 @@ share this snippet so they can wire it up themselves.
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from '@flue/runtime';
 import { ModalClient } from 'modal';
-import { modal } from '../connectors/modal'; // adjust path to match the user's layout
+import { modal } from '../sandboxes/modal'; // adjust path to match the user's layout
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

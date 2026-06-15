@@ -25,7 +25,7 @@ which makes it a good fit for per-session agents that want a real OS.
 ## Where to write the file
 
 Select the first existing source directory: `<root>/.flue/`, then `<root>/src/`,
-then `<root>/`. Write the adapter to `<source-dir>/connectors/boxd.ts`.
+then `<root>/`. Write the adapter to `<source-dir>/sandboxes/boxd.ts`.
 
 If neither feels right (uncommon layout, multiple workspaces, etc.), ask the
 user before writing.
@@ -48,7 +48,7 @@ Write this file verbatim. Do not "improve" it — it conforms to the published
  * @example
  * ```typescript
  * import { Compute } from '@boxd-sh/sdk';
- * import { boxd } from './connectors/boxd';
+ * import { boxd } from './sandboxes/boxd';
  *
  * const client = new Compute({ apiKey: process.env.BOXD_API_KEY });
  * const box = await client.box.create({ name: 'my-agent' });
@@ -61,7 +61,7 @@ import { createSandboxSessionEnv } from '@flue/runtime';
 import type { SandboxApi, SandboxFactory, SessionEnv, FileStat } from '@flue/runtime';
 import type { Box as BoxdBox } from '@boxd-sh/sdk';
 
-export interface BoxdConnectorOptions {
+export interface BoxdAdapterOptions {
 	/**
 	 * Default working directory for `exec()` calls when one isn't supplied
 	 * per-call. Defaults to `/home/boxd` (the boxd VM default user's home).
@@ -228,7 +228,7 @@ class BoxdSandboxApi implements SandboxApi {
  * The user owns the VM lifecycle; Flue wraps it into a SessionEnv
  * for agent use.
  */
-export function boxd(box: BoxdBox, options?: BoxdConnectorOptions): SandboxFactory {
+export function boxd(box: BoxdBox, options?: BoxdAdapterOptions): SandboxFactory {
 	let readyPromise: Promise<void> | undefined;
 	return {
 		async createSessionEnv(): Promise<SessionEnv> {
@@ -284,7 +284,7 @@ share this snippet so they can wire it up themselves.
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from '@flue/runtime';
 import { Compute } from '@boxd-sh/sdk';
-import { boxd } from '../connectors/boxd'; // adjust path to match the user's layout
+import { boxd } from '../sandboxes/boxd'; // adjust path to match the user's layout
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

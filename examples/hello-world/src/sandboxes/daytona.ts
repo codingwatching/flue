@@ -8,7 +8,7 @@
  * @example
  * ```typescript
  * import { Daytona } from '@daytona/sdk';
- * import { daytona } from './connectors/daytona';
+ * import { daytona } from './sandboxes/daytona';
  *
  * const client = new Daytona({ apiKey: process.env.DAYTONA_API_KEY });
  * const sandbox = await client.create({ image: 'ubuntu:latest' });
@@ -107,7 +107,7 @@ class DaytonaSandboxApi implements SandboxApi {
 	}
 }
 
-// ─── Connector ──────────────────────────────────────────────────────────────
+// ─── Sandbox Adapter ────────────────────────────────────────────────────────
 
 /**
  * Create a Flue sandbox factory from an initialized Daytona sandbox.

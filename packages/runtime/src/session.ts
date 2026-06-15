@@ -1191,7 +1191,7 @@ export class Session implements FlueSession, AgentSubmissionSession {
 		}
 	}
 
-	/** Build built-in tools from the connector or the framework defaults. */
+	/** Build built-in tools from the sandbox adapter or the framework defaults. */
 	private createBuiltinTools(
 		env: SessionEnv,
 		tools: ToolDefinition[],
@@ -1214,13 +1214,13 @@ export class Session implements FlueSession, AgentSubmissionSession {
 			activateSkillTool ? [...builtinTools, activateSkillTool] : builtinTools;
 
 		if (this.toolFactory) {
-			let connectorTools = this.toolFactory(env, { subagents: this.config.subagents ?? {} });
+			let adapterTools = this.toolFactory(env, { subagents: this.config.subagents ?? {} });
 			if (Object.keys(packagedSkills).length > 0) {
 				const packagedRead = createPackagedSkillReadTool(packagedSkills);
-				const connectorRead = connectorTools.find((tool) => tool.name === 'read');
-				if (connectorRead) {
-					connectorTools = connectorTools.map((tool) =>
-						tool !== connectorRead
+				const adapterRead = adapterTools.find((tool) => tool.name === 'read');
+				if (adapterRead) {
+					adapterTools = adapterTools.map((tool) =>
+						tool !== adapterRead
 							? tool
 							: {
 									...tool,
@@ -1236,17 +1236,17 @@ export class Session implements FlueSession, AgentSubmissionSession {
 													params as { path: string; offset?: number; limit?: number },
 													signal,
 												)
-											: connectorRead.execute(id, params, signal);
+											: adapterRead.execute(id, params, signal);
 									},
 								},
 					);
 				} else {
-					connectorTools = [...connectorTools, packagedRead];
+					adapterTools = [...adapterTools, packagedRead];
 				}
 			}
-			this.validateConnectorTools(connectorTools);
+			this.validateAdapterTools(adapterTools);
 			return appendActivateSkillTool([
-				...connectorTools,
+				...adapterTools,
 				createTaskTool(runTask, this.config.subagents ?? {}),
 			]);
 		}
@@ -1260,22 +1260,22 @@ export class Session implements FlueSession, AgentSubmissionSession {
 		);
 	}
 
-	/** Validate connector tool names before handing them to the agent loop. */
-	private validateConnectorTools(tools: AgentTool<any>[]): void {
+	/** Validate sandbox adapter tool names before handing them to the agent loop. */
+	private validateAdapterTools(tools: AgentTool<any>[]): void {
 		const names = new Set<string>();
 		for (const tool of tools) {
 			if (tool.name === 'task' || tool.name === 'activate_skill') {
 				throw new ToolNameConflictError({
 					name: tool.name,
 					conflict: 'reserved',
-					source: 'connector',
+					source: 'adapter',
 				});
 			}
 			if (names.has(tool.name)) {
 				throw new ToolNameConflictError({
 					name: tool.name,
 					conflict: 'duplicate',
-					source: 'connector',
+					source: 'adapter',
 				});
 			}
 			names.add(tool.name);

@@ -80,7 +80,7 @@ It's also **headless**: it has no interface of its own. You are responsible for 
 
 For a harness to do anything beyond generate text, the agent needs a real environment to work in. That environment is the **sandbox**: the filesystem and command-execution boundary available to the agent. It is what lets an agent read and write files, run shell commands, install packages, load context such as instructions and skills from disk, and make network requests. The built-in filesystem and shell tools operate inside this boundary; custom tools you write are ordinary functions that run in your agent runtime.
 
-Out of the box, Flue provides a lightweight virtual sandbox — an in-memory filesystem and shell — so an agent has a usable environment with no setup. When you need more, you connect a different one behind the same API: direct access to the host machine, a platform-native option such as Cloudflare, or one of the popular sandbox providers. The [ecosystem](/docs/ecosystem/) lists the available connectors.
+Out of the box, Flue provides a lightweight virtual sandbox — an in-memory filesystem and shell — so an agent has a usable environment with no setup. When you need more, you connect a different one behind the same API: direct access to the host machine, a platform-native option such as Cloudflare, or one of the popular sandbox providers. The [ecosystem](/docs/ecosystem/) lists the available sandbox adapters.
 
 ## Where to go next
 

@@ -144,7 +144,7 @@ function createBashSessionEnv(bash: BashLike): SessionEnv {
 			// Just-bash has no native timeout option. Translate `timeoutMs`
 			// into an AbortSignal and compose with the caller's signal so
 			// bash factories observe deadlines with the same fidelity as
-			// signal-aware sandbox connectors.
+			// signal-aware sandbox adapters.
 			const { mergedSignal } = composeTimeoutSignal(opts?.timeoutMs, opts?.signal);
 
 			const result = await bash.exec(
@@ -198,7 +198,7 @@ function assertBashLike(value: unknown): asserts value is BashLike {
 /**
  * Interface that remote sandbox providers must implement.
  *
- * `exec()` cancellation is expressed two ways. Connectors should honor at
+ * `exec()` cancellation is expressed two ways. Sandbox adapters should honor at
  * least one — preferably `timeoutMs`, since most provider SDKs expose a
  * native timeout option but few support mid-flight cancellation:
  *
@@ -208,12 +208,12 @@ function assertBashLike(value: unknown): asserts value is BashLike {
  *     with coarser granularity may round the value up, never down.
  *     Required for parity with the LLM bash tool, which always passes a
  *     deadline hint when the model requests one.
- *   - `signal?: AbortSignal` (optional): for connectors whose SDK supports
+ *   - `signal?: AbortSignal` (optional): for sandbox adapters whose SDK supports
  *     mid-flight cancellation (Mirage's executor, in-process bash). Lets
- *     Programmatic callers do ad-hoc `abort()`. Connectors that can't honor it
+ *     Programmatic callers do ad-hoc `abort()`. Sandbox adapters that can't honor it
  *     should ignore it; the deadline is still enforced via `timeoutMs`.
  *
- * Connectors that support both should observe whichever fires first.
+ * Sandbox adapters that support both should observe whichever fires first.
  */
 export interface SandboxApi {
 	readFile(path: string): Promise<string>;
@@ -249,12 +249,12 @@ export function createSandboxSessionEnv(api: SandboxApi, cwd: string): SessionEn
 				signal?: AbortSignal;
 			},
 		): Promise<ShellResult> {
-			// Pre/post abort checks here — not in every connector. Most
+			// Pre/post abort checks here — not in every sandbox adapter. Most
 			// provider SDKs (E2B, Daytona, Modal, Boxd, etc.) don't accept
 			// an AbortSignal, so a caller that aborts during a long-running
 			// remote command would otherwise see the call return
 			// successfully and the abort silently dropped. Centralizing the
-			// check means connectors only need to wire `signal` into their
+			// check means sandbox adapters only need to wire `signal` into their
 			// provider SDK when one supports it (Mirage, Vercel); the rest get
 			// correct abort semantics for free.
 			const signal = options?.signal;

@@ -215,7 +215,7 @@ without first confirming the basics work on `--target cloudflare`.
 
 ## Hard rules
 
-- **Do not** create a `connectors/cloudflare.ts` file under any source
+- **Do not** create a `sandboxes/cloudflare.ts` file under any source
   directory. There is no factory function to install — Flue's SDK adapts
   `@cloudflare/sandbox` internally on the Cloudflare target.
 - **Do not** silently migrate a Node-target project to Cloudflare. Always

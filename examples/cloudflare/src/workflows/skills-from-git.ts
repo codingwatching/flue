@@ -19,7 +19,7 @@
 import { WorkspaceFileSystem } from '@cloudflare/shell';
 import { createGit } from '@cloudflare/shell/git';
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from '@flue/runtime';
-import { getDefaultWorkspace, getShellSandbox } from '../connectors/cloudflare-shell';
+import { getDefaultWorkspace, getShellSandbox } from '../sandboxes/cloudflare-shell';
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

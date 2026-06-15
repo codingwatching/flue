@@ -34,7 +34,7 @@ for current status.
 ## Where to write the file
 
 Select the first existing source directory: `<root>/.flue/`, then `<root>/src/`,
-then `<root>/`. Write the adapter to `<source-dir>/connectors/smolvm.ts`.
+then `<root>/`. Write the adapter to `<source-dir>/sandboxes/smolvm.ts`.
 
 If neither feels right (uncommon layout, multiple workspaces, etc.), ask the
 user before writing.
@@ -61,7 +61,7 @@ Write this file verbatim. Do not "improve" it — it conforms to the published
  * @example
  * ```ts
  * import { Machine } from 'smolvm-embedded';
- * import { smolvm } from './connectors/smolvm';
+ * import { smolvm } from './sandboxes/smolvm';
  *
  * const machine = await Machine.create({ name: 'my-flue-vm' });
  * const agent = createAgent(() => ({
@@ -250,7 +250,7 @@ share this snippet so they can wire it up themselves.
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from '@flue/runtime';
 import { Machine } from 'smolvm-embedded';
-import { smolvm } from '../connectors/smolvm'; // adjust path to match the user's layout
+import { smolvm } from '../sandboxes/smolvm'; // adjust path to match the user's layout
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

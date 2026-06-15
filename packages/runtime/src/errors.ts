@@ -553,17 +553,17 @@ export class ToolNameConflictError extends FlueError {
 	}: {
 		name: string;
 		conflict: 'reserved' | 'duplicate';
-		/** Where the conflicting tool came from: agent/call `tools` or a sandbox connector's `tools()`. */
-		source: 'custom' | 'connector';
+		/** Where the conflicting tool came from: agent/call `tools` or a sandbox adapter's `tools()`. */
+		source: 'custom' | 'adapter';
 		reserved?: readonly string[];
 	}) {
 		const dev =
-			source === 'connector'
+			source === 'adapter'
 				? conflict === 'reserved'
-					? `The sandbox connector's tools() returned "${name}", which the framework appends ` +
-						'automatically when appropriate; remove it from the connector.'
-					: `The sandbox connector's tools() returned the name "${name}" more than once; ` +
-						'connector tool names must be unique.'
+					? `The sandbox adapter's tools() returned "${name}", which the framework appends ` +
+						'automatically when appropriate; remove it from the adapter.'
+					: `The sandbox adapter's tools() returned the name "${name}" more than once; ` +
+						'sandbox adapter tool names must be unique.'
 				: conflict === 'reserved'
 					? `Framework-reserved tool names: ${formatList(reserved ?? [])}. Rename the custom tool.`
 					: 'Rename one of the conflicting custom tools.';

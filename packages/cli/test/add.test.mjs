@@ -61,6 +61,7 @@ before(async () => {
 			whatsapp: 'channel--whatsapp.md',
 			twilio: 'channel--twilio.md',
 			messenger: 'channel--messenger.md',
+			daytona: 'sandbox--daytona.md',
 			postgres: 'database--postgres.md',
 			libsql: 'database--libsql.md',
 			turso: 'database--turso.md',
@@ -151,6 +152,15 @@ describe('flue add', () => {
 		assert.ok(result.stderr.includes('flue add sandbox <url>'));
 		assert.ok(result.stderr.includes('flue add channel <url>'));
 		assert.ok(result.stderr.includes('flue add database <url>'));
+	});
+
+	it('prints sandbox blueprint paths under sandboxes when a provider is selected', async () => {
+		const result = await runCli(['add', 'sandbox', 'daytona', '--print']);
+
+		assert.equal(result.code, 0);
+		assert.ok(result.stdout.includes('<source-dir>/sandboxes/daytona.ts'));
+		assert.ok(result.stdout.includes("'../sandboxes/daytona'"));
+		assert.ok(!result.stdout.includes('/connectors/'));
 	});
 
 	it('prints the WhatsApp channel blueprint', async () => {

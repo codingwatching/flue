@@ -29,7 +29,7 @@ The generated adapter expects your application to create and own the Daytona san
 ```ts
 import { Daytona } from '@daytona/sdk';
 import { createAgent } from '@flue/runtime';
-import { daytona } from '../connectors/daytona';
+import { daytona } from '../sandboxes/daytona';
 
 const client = new Daytona({ apiKey: env.DAYTONA_API_KEY });
 const sandbox = await client.create();

@@ -32,7 +32,7 @@ they'll need a different sandbox provider.
 ## Where to write the file
 
 Select the first existing source directory: `<root>/.flue/`, then `<root>/src/`,
-then `<root>/`. Write the adapter to `<source-dir>/connectors/islo.ts`.
+then `<root>/`. Write the adapter to `<source-dir>/sandboxes/islo.ts`.
 
 If neither feels right (uncommon layout, multiple workspaces, etc.), ask the
 user before writing.
@@ -51,7 +51,7 @@ Write this file verbatim. Do not "improve" it — it conforms to the published
  *
  * @example
  * ```ts
- * import { islo } from './connectors/islo';
+ * import { islo } from './sandboxes/islo';
  *
  * const agent = createAgent(() => ({
  *   sandbox: islo('my-sandbox'),
@@ -64,7 +64,7 @@ import { spawn } from 'node:child_process';
 import { createSandboxSessionEnv } from '@flue/runtime';
 import type { SandboxApi, SandboxFactory, SessionEnv, FileStat } from '@flue/runtime';
 
-export interface IsloConnectorOptions {
+export interface IsloAdapterOptions {
 	/** Default cwd inside the sandbox. Defaults to `/workspace`. */
 	cwd?: string;
 	/** Path to the islo binary. Defaults to `"islo"` (resolved via PATH). */
@@ -203,7 +203,7 @@ class IsloSandboxApi implements SandboxApi {
  * the sandbox lifecycle (`islo use <name>` to create, `islo rm <name>` to
  * delete); this factory just adapts it.
  */
-export function islo(name: string, options?: IsloConnectorOptions): SandboxFactory {
+export function islo(name: string, options?: IsloAdapterOptions): SandboxFactory {
 	const cliPath = options?.cliPath ?? 'islo';
 	return {
 		async createSessionEnv(): Promise<SessionEnv> {
@@ -271,7 +271,7 @@ share this snippet so they can wire it up themselves.
 
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from '@flue/runtime';
-import { islo } from '../connectors/islo'; // adjust path to match the user's layout
+import { islo } from '../sandboxes/islo'; // adjust path to match the user's layout
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

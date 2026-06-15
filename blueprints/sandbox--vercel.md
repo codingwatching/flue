@@ -21,7 +21,7 @@ owns the Vercel Sandbox lifecycle; this adapter just adapts the sandbox.
 ## Where to write the file
 
 Select the first existing source directory: `<root>/.flue/`, then `<root>/src/`,
-then `<root>/`. Write the adapter to `<source-dir>/connectors/vercel.ts`.
+then `<root>/`. Write the adapter to `<source-dir>/sandboxes/vercel.ts`.
 
 If neither feels right (uncommon layout, multiple workspaces, etc.), ask the
 user before writing.
@@ -44,7 +44,7 @@ Write this file verbatim. Do not "improve" it — it conforms to the published
  * @example
  * ```typescript
  * import { Sandbox } from '@vercel/sandbox';
- * import { vercel } from './connectors/vercel';
+ * import { vercel } from './sandboxes/vercel';
  *
  * const sandbox = await Sandbox.create({ runtime: 'node24' });
  * const agent = createAgent(() => ({ sandbox: vercel(sandbox), model: 'anthropic/claude-sonnet-4-6' }));
@@ -228,7 +228,7 @@ share this snippet so they can wire it up themselves.
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from '@flue/runtime';
 import { Sandbox } from '@vercel/sandbox';
-import { vercel } from '../connectors/vercel'; // adjust path to match the user's layout
+import { vercel } from '../sandboxes/vercel'; // adjust path to match the user's layout
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

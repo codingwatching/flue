@@ -38,7 +38,7 @@ Things to know before installing:
 ## Where to write the file
 
 Select the first existing source directory: `<root>/.flue/`, then `<root>/src/`,
-then `<root>/`. Write the adapter to `<source-dir>/connectors/mirage.ts`.
+then `<root>/`. Write the adapter to `<source-dir>/sandboxes/mirage.ts`.
 
 If neither feels right (uncommon layout, multiple workspaces, etc.), ask the
 user before writing.
@@ -62,7 +62,7 @@ Write this file verbatim. Do not "improve" it — it conforms to the published
  * @example
  * ```typescript
  * import { Workspace, RAMResource, MountMode } from '@struktoai/mirage-node';
- * import { mirage } from '../connectors/mirage';
+ * import { mirage } from '../sandboxes/mirage';
  *
  * const ws = new Workspace({ '/data': new RAMResource() }, { mode: MountMode.WRITE });
  * const agent = createAgent(() => ({ sandbox: mirage(ws), model: 'anthropic/claude-sonnet-4-6' }));
@@ -74,7 +74,7 @@ import { createSandboxSessionEnv } from '@flue/runtime';
 import type { SandboxApi, SandboxFactory, SessionEnv, FileStat } from '@flue/runtime';
 import type { Workspace as MirageWorkspace } from '@struktoai/mirage-core';
 
-export interface MirageConnectorOptions {
+export interface MirageAdapterOptions {
 	/**
 	 * Default working directory for `exec()` calls when the caller doesn't
 	 * pass one. Mirage workspaces are rooted at `/` (mounts hang off this
@@ -277,7 +277,7 @@ class MirageSandboxApi implements SandboxApi {
  */
 export function mirage(
 	workspace: MirageWorkspace,
-	options?: MirageConnectorOptions,
+	options?: MirageAdapterOptions,
 ): SandboxFactory {
 	return {
 		async createSessionEnv({ id }: { id: string }): Promise<SessionEnv> {
@@ -359,7 +359,7 @@ share this snippet so they can wire it up themselves.
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from '@flue/runtime';
 import { Workspace, RAMResource, MountMode } from '@struktoai/mirage-node';
-import { mirage } from '../connectors/mirage'; // adjust path to match the user's layout
+import { mirage } from '../sandboxes/mirage'; // adjust path to match the user's layout
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

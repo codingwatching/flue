@@ -36,19 +36,19 @@ Caller-safe error details exposed by Flue transports. Unknown failures become a 
 
 The following categories are stable for framework-owned transport failures. HTTP responses use the listed status code.
 
-| Type                     | HTTP status | Meaning                                                                                                |
-| ------------------------ | ----------- | ------------------------------------------------------------------------------------------------------ |
-| `method_not_allowed`     | `405`       | The endpoint does not accept the request method. HTTP responses include `Allow`.                       |
-| `unsupported_media_type` | `415`       | A request body was not sent as JSON.                                                                   |
-| `invalid_json`           | `400`       | A request body could not be read or parsed as JSON.                                                    |
-| `agent_not_found`        | `404`       | The requested agent is not registered or not exposed through the requested transport.                  |
-| `workflow_not_found`     | `404`       | The requested workflow is not registered or not exposed over HTTP.                                     |
-| `route_not_found`        | `404`       | No generated default-application route matches the request.                                            |
-| `run_not_found`          | `404`       | The workflow run is missing, expired, or not owned by the resolved workflow instance.                  |
+| Type                     | HTTP status | Meaning                                                                                                 |
+| ------------------------ | ----------- | ------------------------------------------------------------------------------------------------------- |
+| `method_not_allowed`     | `405`       | The endpoint does not accept the request method. HTTP responses include `Allow`.                        |
+| `unsupported_media_type` | `415`       | A request body was not sent as JSON.                                                                    |
+| `invalid_json`           | `400`       | A request body could not be read or parsed as JSON.                                                     |
+| `agent_not_found`        | `404`       | The requested agent is not registered or not exposed through the requested transport.                   |
+| `workflow_not_found`     | `404`       | The requested workflow is not registered or not exposed over HTTP.                                      |
+| `route_not_found`        | `404`       | No generated default-application route matches the request.                                             |
+| `run_not_found`          | `404`       | The workflow run is missing, expired, or not owned by the resolved workflow instance.                   |
 | `stream_not_found`       | `404`       | The agent-instance event stream does not exist yet; agent streams are created on first admitted prompt. |
-| `run_store_unavailable`  | `501`       | The runtime does not provide workflow-run storage, lookup, or listing.                                 |
-| `invalid_request`        | `400`       | The request shape, parameters, or protocol message is invalid. Read `details` for the specific reason. |
-| `internal_error`         | `500`       | An unknown or non-public server failure occurred.                                                      |
+| `run_store_unavailable`  | `501`       | The runtime does not provide workflow-run storage, lookup, or listing.                                  |
+| `invalid_request`        | `400`       | The request shape, parameters, or protocol message is invalid. Read `details` for the specific reason.  |
+| `internal_error`         | `500`       | An unknown or non-public server failure occurred.                                                       |
 
 ## Transport envelopes
 
@@ -98,7 +98,7 @@ Harness and session operations, and runtime provider registration, reject with t
 | `ModelNotConfiguredError`   | `model_not_configured`          | A model operation runs with no call-level or agent-level model configured.                                                                                                                                                           |
 | `TaskDepthExceededError`    | `task_depth_exceeded`           | Nested `task()` delegation exceeds the supported depth.                                                                                                                                                                              |
 | `SubagentNotDeclaredError`  | `subagent_not_declared`         | `task()` names a subagent the agent does not declare.                                                                                                                                                                                |
-| `ToolNameConflictError`     | `tool_name_conflict`            | Custom or connector tool names collide with each other or with framework-reserved names.                                                                                                                                             |
+| `ToolNameConflictError`     | `tool_name_conflict`            | Custom or sandbox adapter tool names collide with each other or with framework-reserved names.                                                                                                                                       |
 | `ToolInputValidationError`  | `tool_input_validation`         | Model-supplied tool arguments fail the tool's valibot `parameters` schema. The agent loop converts the throw into an error tool result so the model can retry; `meta.issues` carries the failures in Standard Schema's issues shape. |
 | `OperationFailedError`      | `operation_failed`              | An operation ran but did not complete successfully (for example, the model call errored).                                                                                                                                            |
 | `SubmissionTimeoutError`    | `submission_timeout`            | A durable submission exceeded its configured processing timeout.                                                                                                                                                                     |

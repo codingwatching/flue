@@ -3,7 +3,7 @@
 This directory exercises Flue's Cloudflare-specific surfaces. The agents
 here are intentionally minimal — each one demonstrates a single capability
 end-to-end so it's easy to copy the pattern into a real app. The cf-shell
-workflows use the project-owned sandbox adapter at `src/connectors/cloudflare-shell.ts`, generated conceptually by `flue add sandbox @cloudflare/shell`.
+workflows use the project-owned sandbox adapter at `src/sandboxes/cloudflare-shell.ts`, generated conceptually by `flue add sandbox @cloudflare/shell`.
 
 ## Agents
 
@@ -36,7 +36,7 @@ matching provider key in `.env` at the project root (see
 
 ## Worker Loader requirement (skills-from-r2, skills-from-git)
 
-Both hydration examples use the project-owned sandbox adapter at `src/connectors/cloudflare-shell.ts` and require a `worker_loaders` binding. Worker Loader
+Both hydration examples use the project-owned sandbox adapter at `src/sandboxes/cloudflare-shell.ts` and require a `worker_loaders` binding. Worker Loader
 is **currently in beta** and your Cloudflare account needs access; the
 binding is already declared in `wrangler.jsonc` here.
 

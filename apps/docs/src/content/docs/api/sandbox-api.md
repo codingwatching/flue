@@ -12,7 +12,7 @@ If you are a coding agent building a sandbox adapter for a user, follow this doc
 A sandbox adapter is one TypeScript file. It exports a factory function that takes an already-initialized provider sandbox plus options and returns a `SandboxFactory`. Flue calls `factory.createSessionEnv({ id })` once per initialized harness and uses the returned `SessionEnv` for all shell and file operations.
 
 ```ts
-// <source-dir>/connectors/<provider>.ts
+// <source-dir>/sandboxes/<provider>.ts
 import { createSandboxSessionEnv } from '@flue/runtime';
 import type { SandboxApi, SandboxFactory, SessionEnv, FileStat } from '@flue/runtime';
 import type { Sandbox as ProviderSandbox } from '<provider-sdk>';
@@ -184,7 +184,7 @@ The user's project root does not change. The selected source directory inside it
 2. `<root>/src/`
 3. `<root>/`
 
-Write the adapter to `<source-dir>/connectors/<name>.ts`. If the selected source directory is unclear, ask the user before writing.
+Write the adapter to `<source-dir>/sandboxes/<name>.ts`. If the selected source directory is unclear, ask the user before writing.
 
 ## Verify a generated sandbox adapter
 

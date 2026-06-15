@@ -14,7 +14,7 @@ pnpm exec flue add sandbox cloudflare-shell
 Import the generated helpers from your project adapter file, not from `@flue/runtime/cloudflare`:
 
 ```ts
-import { getDefaultWorkspace, getShellSandbox } from '../connectors/cloudflare-shell';
+import { getDefaultWorkspace, getShellSandbox } from '../sandboxes/cloudflare-shell';
 ```
 
 ## Requirements

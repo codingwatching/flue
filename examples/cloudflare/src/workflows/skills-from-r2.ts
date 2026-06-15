@@ -31,7 +31,7 @@ import {
 	getDefaultWorkspace,
 	getShellSandbox,
 	hydrateFromBucket,
-} from '../connectors/cloudflare-shell';
+} from '../sandboxes/cloudflare-shell';
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

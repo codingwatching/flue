@@ -29,7 +29,7 @@ swap in `@e2b/code-interpreter` — its `Sandbox` class has the same
 ## Where to write the file
 
 Select the first existing source directory: `<root>/.flue/`, then `<root>/src/`,
-then `<root>/`. Write the adapter to `<source-dir>/connectors/e2b.ts`.
+then `<root>/`. Write the adapter to `<source-dir>/sandboxes/e2b.ts`.
 
 If neither feels right (uncommon layout, multiple workspaces, etc.), ask the
 user before writing.
@@ -52,7 +52,7 @@ Write this file verbatim. Do not "improve" it — it conforms to the published
  * @example
  * ```typescript
  * import { Sandbox } from 'e2b';
- * import { e2b } from './connectors/e2b';
+ * import { e2b } from './sandboxes/e2b';
  *
  * const sandbox = await Sandbox.create();
  * const agent = createAgent(() => ({ sandbox: e2b(sandbox), model: 'anthropic/claude-sonnet-4-6' }));
@@ -219,7 +219,7 @@ share this snippet so they can wire it up themselves.
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from '@flue/runtime';
 import { Sandbox } from 'e2b';
-import { e2b } from '../connectors/e2b'; // adjust path to match the user's layout
+import { e2b } from '../sandboxes/e2b'; // adjust path to match the user's layout
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

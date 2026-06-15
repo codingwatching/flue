@@ -680,7 +680,7 @@ leaseExpiresAt: 1,
 				fauxAssistantMessage('Aborted before delivery.'),
 			]);
 
-			// Connector tools run sequentially, so the shutdown abort breaks the
+			// Adapter tools run sequentially, so the shutdown abort breaks the
 			// tool loop mid-batch: alpha completes with a real (externally
 			// effectful) result, bravo is interrupted in flight, charlie never
 			// starts — a PARTIAL tool-result batch in durable history.

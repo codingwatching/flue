@@ -5,7 +5,7 @@
 }
 ---
 
-# Generic Sandbox Connector
+# Generic Sandbox Adapter
 
 ## Goal
 
@@ -47,7 +47,7 @@ These are the things that aren't obvious from the spec or the example.
 
 - **File location.** Select the first existing source directory in this order:
   `<root>/.flue/`, `<root>/src/`, then `<root>/`. Write the adapter to
-  `<source-dir>/connectors/<name>.ts`. Ask the user if their layout is unusual.
+  `<source-dir>/sandboxes/<name>.ts`. Ask the user if their layout is unusual.
 - **Imports.** The published surface is `@flue/runtime`. Don't import
   from `@flue/runtime/internal` or any other internal path.
 - **Cancellation.** `SandboxApi.exec()` receives `timeout` (primary) and

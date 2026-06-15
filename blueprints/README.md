@@ -68,7 +68,7 @@ A sandbox blueprint should:
 
 1. Explain that it installs a sandbox adapter and that the application owns the provider resource lifecycle.
 2. Select the first existing source root from `<root>/.flue/`, `<root>/src/`, and `<root>/`.
-3. Write the implementation to `<source-root>/connectors/<name>.ts`; this generated project path remains intentionally named `connectors`.
+3. Write the implementation to `<source-root>/sandboxes/<name>.ts`.
 4. Include complete TypeScript ready to write, required dependencies, authentication, agent wiring, and verification steps.
 5. Use runtime API names such as `SandboxFactory` exactly as exported.
 
@@ -90,7 +90,7 @@ Do not imply a common provider-client API, install generic tool collections, or 
 
 ### Database adapter blueprints
 
-Database blueprints produce a source-root `db.ts` that default-exports a `PersistenceAdapter`, not a file under `connectors/`.
+Database blueprints produce a source-root `db.ts` that default-exports a `PersistenceAdapter`, not a file under `sandboxes/`.
 
 Named blueprints with first-party packages install `@flue/<backend>` and create a small `db.ts`. The generic guide points to the `PersistenceAdapter` contract and the PostgreSQL blueprint as an implementation example.
 

@@ -21,7 +21,7 @@ the Daytona client lifecycle; this adapter just adapts the sandbox.
 ## Where to write the file
 
 Select the first existing source directory: `<root>/.flue/`, then `<root>/src/`,
-then `<root>/`. Write the adapter to `<source-dir>/connectors/daytona.ts`.
+then `<root>/`. Write the adapter to `<source-dir>/sandboxes/daytona.ts`.
 
 If neither feels right (uncommon layout, multiple workspaces, etc.), ask the
 user before writing.
@@ -44,7 +44,7 @@ Write this file verbatim. Do not "improve" it — it conforms to the published
  * @example
  * ```typescript
  * import { Daytona } from '@daytona/sdk';
- * import { daytona } from './connectors/daytona';
+ * import { daytona } from './sandboxes/daytona';
  *
  * const client = new Daytona({ apiKey: process.env.DAYTONA_API_KEY });
  * const sandbox = await client.create({ image: 'ubuntu:latest' });
@@ -186,7 +186,7 @@ share this snippet so they can wire it up themselves.
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from '@flue/runtime';
 import { Daytona } from '@daytona/sdk';
-import { daytona } from '../connectors/daytona'; // adjust path to match the user's layout
+import { daytona } from '../sandboxes/daytona'; // adjust path to match the user's layout
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

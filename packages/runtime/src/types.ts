@@ -111,7 +111,7 @@ export type Skill =
  * File metadata returned by {@link FlueFs.stat}.
  *
  * `isSymbolicLink`, `size`, and `mtime` are omitted when the sandbox
- * connector's provider does not expose them — connectors must never
+ * sandbox adapter's provider does not expose them — sandbox adapters must never
  * fabricate placeholder values.
  */
 export interface FileStat {
@@ -138,9 +138,9 @@ export interface SessionEnv {
 			env?: Record<string, string>;
 			/**
 			 * Wall-clock deadline hint in milliseconds. Forwarded to the
-			 * underlying sandbox connector's native timeout option (E2B
+			 * underlying sandbox adapter's native timeout option (E2B
 			 * `timeoutMs`, Daytona `timeout`, etc.) so signal-blind providers
-			 * still observe the deadline with full fidelity. Connectors whose
+			 * still observe the deadline with full fidelity. Sandbox adapters whose
 			 * provider only supports a coarser granularity may round the value
 			 * up, never down.
 			 *
@@ -152,10 +152,10 @@ export interface SessionEnv {
 			timeoutMs?: number;
 			/**
 			 * Cancel the in-flight command. Aborting rejects with an
-			 * `AbortError`. Connectors that wrap a signal-aware SDK observe
+			 * `AbortError`. Sandbox adapters that wrap a signal-aware SDK observe
 			 * this mid-flight; others see it only before/after the remote
 			 * call returns. Use `timeoutMs` for guaranteed deadline
-			 * enforcement on signal-blind connectors.
+			 * enforcement on signal-blind sandbox adapters.
 			 */
 			signal?: AbortSignal;
 		},
@@ -184,7 +184,7 @@ export interface SessionEnv {
 /**
  * Filesystem surface for the harness sandbox, exposed on `FlueHarness.fs` and
  * `FlueSession.fs`. Reads and writes happen inside whatever the sandbox
- * connector points at (a remote container, microVM, in-process FS, etc.).
+ * sandbox adapter points at (a remote container, microVM, in-process FS, etc.).
  *
  * Operations are out-of-band — they don't appear in the conversation
  * transcript. The model has its own `read`/`write`/`edit` tools for
@@ -195,8 +195,8 @@ export interface SessionEnv {
  *
  * Paths can be absolute or relative. Relative paths are resolved against
  * the agent's cwd, which comes from `createAgent(() => ({ cwd }))` if set, otherwise from
- * the sandbox connector's default (varies by provider). Use absolute paths
- * for portability across connectors.
+ * the sandbox adapter's default (varies by provider). Use absolute paths
+ * for portability across sandbox adapters.
  */
 export interface FlueFs {
 	/** Read a UTF-8 file. Throws if the path doesn't exist or isn't a file. */
@@ -212,7 +212,7 @@ export interface FlueFs {
 	 * Missing parent directories are created automatically, in every sandbox
 	 * mode — `fs.writeFile('out/nested/report.md', ...)` never requires a
 	 * prior `mkdir`. The runtime implements this guarantee itself, so sandbox
-	 * connectors don't need to create parents in their `writeFile`.
+	 * sandbox adapters don't need to create parents in their `writeFile`.
 	 */
 	writeFile(path: string, content: string | Uint8Array): Promise<void>;
 
@@ -802,7 +802,7 @@ export interface ShellOptions {
 	cwd?: string;
 	/**
 	 * Wall-clock deadline in milliseconds, forwarded to the sandbox
-	 * connector. See `SessionEnv.exec`.
+	 * sandbox adapter. See `SessionEnv.exec`.
 	 */
 	timeoutMs?: number;
 	/** Cancel this call. See `CallHandle`. */
@@ -822,7 +822,7 @@ export interface SessionToolFactoryOptions {
 	subagents: Record<string, AgentProfile>;
 }
 
-/** Connector-supplied model-facing tools. Flue appends `task` separately. */
+/** Sandbox adapter-supplied model-facing tools. Flue appends `task` separately. */
 export type SessionToolFactory = (
 	env: SessionEnv,
 	options: SessionToolFactoryOptions,
@@ -837,7 +837,7 @@ export interface SandboxFactory {
 	 * `id` is the context id (`ctx.id`): the agent instance id for direct
 	 * agent requests, or the workflow run id inside a workflow. Multiple
 	 * harnesses initialized in the same context receive the same `id`, so a
-	 * connector that keys provider resources on `id` must tolerate repeated
+	 * sandbox adapter that keys provider resources on `id` must tolerate repeated
 	 * calls with the same value.
 	 */
 	createSessionEnv(options: { id: string }): Promise<SessionEnv>;

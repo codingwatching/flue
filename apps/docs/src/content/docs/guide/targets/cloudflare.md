@@ -159,7 +159,7 @@ pnpm exec flue add sandbox cloudflare-shell
 Then import its helpers from your generated sandbox adapter file, not from `@flue/runtime/cloudflare`:
 
 ```ts
-import { getDefaultWorkspace, getShellSandbox } from '../connectors/cloudflare-shell';
+import { getDefaultWorkspace, getShellSandbox } from '../sandboxes/cloudflare-shell';
 ```
 
 Use Cloudflare Shell when a durable Workspace and structured code operations are enough. Use Cloudflare Sandbox when you need a full Linux environment with arbitrary shell access. See [Cloudflare Shell](/docs/ecosystem/sandboxes/cloudflare-shell/) for setup details.

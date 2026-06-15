@@ -22,7 +22,7 @@ binding. The user owns workspace construction and hydration.
 ## Where to write the file
 
 Select the first existing source directory: `<root>/.flue/`, then `<root>/src/`,
-then `<root>/`. Write the adapter to `<source-dir>/connectors/cloudflare-shell.ts`.
+then `<root>/`. Write the adapter to `<source-dir>/sandboxes/cloudflare-shell.ts`.
 
 If neither feels right, ask the user before writing. Create any missing parent
 directories.
@@ -338,7 +338,7 @@ use `@cloudflare/sandbox` Containers with `mountBucket` instead.
 
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from '@flue/runtime';
-import { getDefaultWorkspace, getShellSandbox } from '../connectors/cloudflare-shell';
+import { getDefaultWorkspace, getShellSandbox } from '../sandboxes/cloudflare-shell';
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 
@@ -369,7 +369,7 @@ import {
   getDefaultWorkspace,
   getShellSandbox,
   hydrateFromBucket,
-} from '../connectors/cloudflare-shell';
+} from '../sandboxes/cloudflare-shell';
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

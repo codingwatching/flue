@@ -30,7 +30,7 @@ already exists.
 ## Where to write the file
 
 Select the first existing source directory: `<root>/.flue/`, then `<root>/src/`,
-then `<root>/`. Write the adapter to `<source-dir>/connectors/exedev.ts`.
+then `<root>/`. Write the adapter to `<source-dir>/sandboxes/exedev.ts`.
 
 If neither feels right (uncommon layout, multiple workspaces, etc.), ask the
 user before writing.
@@ -59,7 +59,7 @@ Write this file verbatim. Do not "improve" it — it conforms to the published
  *
  * @example Existing VM (most common)
  * ```typescript
- * import { exedev } from './connectors/exedev';
+ * import { exedev } from './sandboxes/exedev';
  *
  * const agent = createAgent(() => ({
  *   sandbox: exedev({ host: 'maple-dune.exe.xyz' }),
@@ -70,7 +70,7 @@ Write this file verbatim. Do not "improve" it — it conforms to the published
  *
  * @example Create a VM before wrapping it
  * ```typescript
- * import { createExeVm, deleteExeVm, exedev } from './connectors/exedev';
+ * import { createExeVm, deleteExeVm, exedev } from './sandboxes/exedev';
  *
  * const vm = await createExeVm({ apiToken: process.env.EXE_API_TOKEN! });
  * try {
@@ -106,7 +106,7 @@ export interface ExeDevVm {
   port?: number;
 }
 
-export interface ExeDevConnectorOptions {
+export interface ExeDevAdapterOptions {
   /** SSH username on the VM. Defaults to "user" (exeuntu default). */
   username?: string;
   /** SSH port. Defaults to the VM port, then 22. */
@@ -127,7 +127,7 @@ export interface ExeDevLifecycleOptions {
   /** How long to wait for SSH after create/clone. Defaults to 90000ms. */
   readyTimeoutMs?: number;
   /** SSH options used for the readiness check. */
-  ssh?: ExeDevConnectorOptions;
+  ssh?: ExeDevAdapterOptions;
 }
 
 export interface CloneExeVmOptions {
@@ -138,7 +138,7 @@ export interface CloneExeVmOptions {
   /** How long to wait for SSH after clone. Defaults to 90000ms. */
   readyTimeoutMs?: number;
   /** SSH options used for the readiness check. */
-  ssh?: ExeDevConnectorOptions;
+  ssh?: ExeDevAdapterOptions;
 }
 
 export interface DeleteExeVmOptions {
@@ -249,7 +249,7 @@ export async function deleteExeVm(options: DeleteExeVmOptions): Promise<void> {
 /** Wait until an exe.dev VM accepts SSH connections. */
 export async function waitForExeVm(
   vm: ExeDevVm,
-  options?: ExeDevConnectorOptions,
+  options?: ExeDevAdapterOptions,
   timeoutMs = DEFAULT_VM_READY_TIMEOUT_MS,
 ): Promise<void> {
   if (timeoutMs <= 0) return;
@@ -279,7 +279,7 @@ function shellEnvAssignment(name: string, value: string): string {
 
 /** Resolve SSH auth — either a private key (file/buffer) or an agent socket. */
 export function resolveAuth(
-  opts: ExeDevConnectorOptions,
+  opts: ExeDevAdapterOptions,
   env: NodeJS.ProcessEnv = process.env,
 ): { privateKey?: string | Buffer; agent?: string } {
   if (opts.privateKey) return { privateKey: opts.privateKey };
@@ -358,7 +358,7 @@ export function isRetryableSshError(err: unknown): boolean {
 
 async function sshConnectWithRetry(
   vm: ExeDevVm,
-  opts: ExeDevConnectorOptions,
+  opts: ExeDevAdapterOptions,
   timeoutMs: number,
 ): Promise<{ ssh: SSHClient; disconnect: () => void }> {
   const start = Date.now();
@@ -383,7 +383,7 @@ async function sshConnectWithRetry(
 
 async function sshConnect(
   vm: ExeDevVm,
-  opts: ExeDevConnectorOptions,
+  opts: ExeDevAdapterOptions,
 ): Promise<{ ssh: SSHClient; disconnect: () => void }> {
   const ssh = new SSHClient();
   const config: ConnectConfig = {
@@ -612,7 +612,7 @@ export class ExeDevSandboxApi implements SandboxApi {
   }
 }
 
-export function exedev(vm: ExeDevVm | string, options?: ExeDevConnectorOptions): SandboxFactory {
+export function exedev(vm: ExeDevVm | string, options?: ExeDevAdapterOptions): SandboxFactory {
   const resolvedVm = typeof vm === "string" ? { host: vm } : vm;
   return {
     async createSessionEnv(): Promise<SessionEnv> {
@@ -713,7 +713,7 @@ hostname before wiring the adapter.
 
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from "@flue/runtime";
-import { exedev } from "../connectors/exedev";
+import { exedev } from "../sandboxes/exedev";
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 
@@ -737,7 +737,7 @@ then passed to `exedev(...)`.
 
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from "@flue/runtime";
-import { createExeVm, deleteExeVm, exedev } from "../connectors/exedev";
+import { createExeVm, deleteExeVm, exedev } from "../sandboxes/exedev";
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 
@@ -767,7 +767,7 @@ token also needs `rm` permission.
 
 ```ts
 import { createAgent, type FlueContext, type WorkflowRouteHandler } from "@flue/runtime";
-import { cloneExeVm, deleteExeVm, exedev } from "../connectors/exedev";
+import { cloneExeVm, deleteExeVm, exedev } from "../sandboxes/exedev";
 
 export const route: WorkflowRouteHandler = async (_c, next) => next();
 

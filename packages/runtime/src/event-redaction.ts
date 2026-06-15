@@ -65,7 +65,7 @@ function redactEachMessageImages(messages: AgentMessage[]): AgentMessage[] {
 /**
  * Redact `content` blocks of an `AgentToolResult`-shaped tool result. The
  * tool-specific `details` payload is arbitrary and is passed through as-is;
- * connector tools should not copy raw image bytes into `details`.
+ * adapter tools should not copy raw image bytes into `details`.
  */
 function redactToolResultImages(result: unknown): unknown {
 	if (result === null || typeof result !== 'object') return result;

@@ -130,7 +130,7 @@ describe('session event image redaction', () => {
 		expect(JSON.stringify(turnRequest)).not.toContain(IMAGE_BYTES);
 	});
 
-	it('omits connector tool-result image bytes from tool and turn_messages events when a tool returns an image', async () => {
+	it('omits adapter tool-result image bytes from tool and turn_messages events when a tool returns an image', async () => {
 		const provider = createProvider();
 		provider.setResponses([
 			fauxAssistantMessage(fauxToolCall('screenshot', {}), { stopReason: 'toolUse' }),
