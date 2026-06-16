@@ -134,6 +134,15 @@
 	text-decoration-color: currentColor;
 }
 
+.blog-content .channel-ribbon-browse {
+	color: #6b7280;
+	text-decoration: none;
+}
+
+.blog-content .channel-ribbon-browse:hover {
+	color: #111827;
+}
+
 .blog-content strong {
 	font-weight: 650;
 }

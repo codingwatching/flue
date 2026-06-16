@@ -17,6 +17,29 @@ const { title, subtitle, description, author, authorUrl, pubDate } = frontmatter
 const pageTitle = `${title} | Flue`;
 const pageDescription = description ?? subtitle ?? "The open framework for building durable agents.";
 const canonicalUrl = new URL(Astro.url.pathname, "https://flueframework.com").href;
+const socialImageUrl = "https://flueframework.com/og3.jpg";
+const publishedAt = pubDate ? `${pubDate}T00:00:00.000Z` : undefined;
+const structuredData = {
+	"@context": "https://schema.org",
+	"@type": "BlogPosting",
+	headline: title,
+	description: pageDescription,
+	url: canonicalUrl,
+	image: socialImageUrl,
+	...(publishedAt && { datePublished: publishedAt }),
+	...(author && {
+		author: {
+			"@type": "Person",
+			name: author,
+			...(authorUrl && { url: authorUrl }),
+		},
+	}),
+	publisher: {
+		"@type": "Organization",
+		name: "Flue",
+		url: "https://flueframework.com/",
+	},
+};
 const formattedDate = pubDate
 	? new Date(`${pubDate}T00:00:00Z`).toLocaleDateString("en-US", {
 			month: "long",
@@ -48,13 +71,20 @@ const formattedDate = pubDate
 		<meta property="og:title" content={pageTitle} />
 		<meta property="og:description" content={pageDescription} />
 		<meta property="og:url" content={canonicalUrl} />
-		<meta property="og:image" content="https://flueframework.com/og3.jpg" />
+		<meta property="og:image" content={socialImageUrl} />
+		<meta property="og:image:type" content="image/jpeg" />
+		<meta property="og:image:width" content="987" />
+		<meta property="og:image:height" content="555" />
 		<meta property="og:image:alt" content="Flue framework logo" />
+		{publishedAt && <meta property="article:published_time" content={publishedAt} />}
+		{author && <meta property="article:author" content={authorUrl ?? author} />}
 
 		<meta name="twitter:card" content="summary_large_image" />
 		<meta name="twitter:title" content={pageTitle} />
 		<meta name="twitter:description" content={pageDescription} />
-		<meta name="twitter:image" content="https://flueframework.com/og3.jpg" />
+		<meta name="twitter:image" content={socialImageUrl} />
+		<meta name="twitter:image:alt" content="Flue framework logo" />
+		<script type="application/ld+json" set:html={JSON.stringify(structuredData)}></script>
 
 		<link rel="preconnect" href="https://fonts.googleapis.com" />
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -91,7 +121,7 @@ const formattedDate = pubDate
 			</div>
 		</nav>
 
-		<main class="mx-auto w-[min(100%,46rem)] px-5 pb-24 pt-12 sm:pt-16">
+		<main class="mx-auto w-[min(100%,46rem)] px-5 pb-24 pt-8 sm:pt-10">
 			<header class="mb-8 border-b border-[var(--blog-border)] pb-5">
 				<BlogCover />
 				<h1 class="text-4xl font-bold leading-[1.08] tracking-[-0.03em] text-gray-950 sm:text-5xl">{title}</h1>
