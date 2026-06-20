@@ -37,7 +37,7 @@ describe('session.compact()', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(createAgent(() => ({ model: modelSpecifier })));
+		const harness = await ctx.initializeRootHarness(createAgent(() => ({ model: modelSpecifier })));
 		const session = await harness.session();
 
 		await expect(session.compact()).resolves.toBeUndefined();
@@ -73,7 +73,7 @@ describe('session.compact()', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({ model: modelSpecifier, compaction: { keepRecentTokens: 3 } })),
 		);
 		const session = await harness.session();
@@ -122,7 +122,7 @@ describe('session.compact()', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({ model: modelSpecifier, compaction: { keepRecentTokens: 3 } })),
 		);
 		const session = await harness.session();
@@ -172,7 +172,7 @@ describe('session.compact()', () => {
 			createDefaultEnv: async () => createNoopSessionEnv(),
 			defaultStore: new InMemorySessionStore(),
 		});
-		const harness = await ctx.init(createAgent(() => ({ model: modelSpecifier })));
+		const harness = await ctx.initializeRootHarness(createAgent(() => ({ model: modelSpecifier })));
 		const session = await harness.session();
 		const prompt = session.prompt('wait for completion');
 		await started;
@@ -211,7 +211,7 @@ describe('session.compact()', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: modelSpecifier,
 				compaction: false,
@@ -259,7 +259,7 @@ describe('automatic compaction', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: modelSpecifier,
 				compaction: { reserveTokens: 100000, keepRecentTokens: 1 },
@@ -303,7 +303,7 @@ describe('automatic compaction', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: modelSpecifier,
 				compaction: false,
@@ -350,7 +350,7 @@ describe('automatic compaction', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({ model: modelSpecifier, compaction: { keepRecentTokens: 3 } })),
 		);
 		const session = await harness.session();
@@ -406,7 +406,7 @@ describe('automatic compaction', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: modelSpecifier,
 				compaction: false,
@@ -453,7 +453,7 @@ describe('automatic compaction', () => {
 			createDefaultEnv: async () => createNoopSessionEnv(),
 			defaultStore: new InMemorySessionStore(),
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({ model: modelSpecifier, compaction: { keepRecentTokens: 3 } })),
 		);
 		const session = await harness.session();
@@ -522,7 +522,7 @@ describe('automatic compaction', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: agentModelSpecifier,
 				compaction: { keepRecentTokens: 3, model: summarizerModelSpecifier },

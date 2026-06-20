@@ -106,7 +106,7 @@ describe('model-called Actions', () => {
 				return fauxAssistantMessage('Reviewed.');
 			},
 		]);
-		const harness = await createContext(provider, store).init(
+		const harness = await createContext(provider, store).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				actions: [review],
@@ -157,7 +157,7 @@ describe('model-called Actions', () => {
 			fauxAssistantMessage(fauxToolCall('write_report', {}), { stopReason: 'toolUse' }),
 			fauxAssistantMessage('Done.'),
 		]);
-		const harness = await createContext(provider, store).init(
+		const harness = await createContext(provider, store).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				sandbox: { createSessionEnv },
@@ -209,7 +209,7 @@ describe('model-called Actions', () => {
 			parameters: v.object({}),
 			execute: async () => 'selected',
 		});
-		const harness = await createContext(provider, store, createNoopSessionEnv({ exec })).init(
+		const harness = await createContext(provider, store, createNoopSessionEnv({ exec })).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				subagents: [
@@ -272,7 +272,7 @@ describe('model-called Actions', () => {
 				return fauxAssistantMessage('Handled.');
 			},
 		]);
-		const harness = await createContext(provider, store, env).init(
+		const harness = await createContext(provider, store, env).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				actions: [action],
@@ -317,7 +317,7 @@ describe('model-called Actions', () => {
 		provider.setResponses([
 			fauxAssistantMessage(fauxToolCall('wait_for_children', {}), { stopReason: 'toolUse' }),
 		]);
-		const harness = await createContext(provider, store, env).init(
+		const harness = await createContext(provider, store, env).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				actions: [action],
@@ -371,7 +371,7 @@ describe('model-called Actions', () => {
 			fauxAssistantMessage(fauxToolCall('retry_retention', {}), { stopReason: 'toolUse' }),
 			fauxAssistantMessage('Retried.'),
 		]);
-		const harness = await createContext(provider, store).init(
+		const harness = await createContext(provider, store).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				actions: [action],
@@ -406,7 +406,7 @@ describe('model-called Actions', () => {
 			fauxAssistantMessage(fauxToolCall('retain_child', {}), { stopReason: 'toolUse' }),
 			fauxAssistantMessage('Done.'),
 		]);
-		const harness = await createContext(provider, store).init(
+		const harness = await createContext(provider, store).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				actions: [action],
@@ -446,7 +446,7 @@ describe('Action model tools', () => {
 				return undefined;
 			},
 		});
-		const harness = await createContext(provider, new RecordingSessionStore()).init(
+		const harness = await createContext(provider, new RecordingSessionStore()).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				actions: [lookup],
@@ -467,7 +467,7 @@ describe('Action model tools', () => {
 	it('rejects adapter framework-reserved names regardless of active result or skill tools', async () => {
 		for (const name of ['task', 'activate_skill', 'finish', 'give_up']) {
 			const provider = createProvider();
-			const harness = await createContext(provider, new RecordingSessionStore()).init(
+			const harness = await createContext(provider, new RecordingSessionStore()).initializeRootHarness(
 				createAgent(() => ({
 					model: `${provider.getModel().provider}/${provider.getModel().id}`,
 					sandbox: {
@@ -485,7 +485,7 @@ describe('Action model tools', () => {
 
 		for (const name of ['task', 'activate_skill', 'finish', 'give_up']) {
 			const provider = createProvider();
-			const harness = await createContext(provider, new RecordingSessionStore()).init(
+			const harness = await createContext(provider, new RecordingSessionStore()).initializeRootHarness(
 				createAgent(() => ({
 					model: `${provider.getModel().provider}/${provider.getModel().id}`,
 					skills: [{ name: 'review', description: 'Review inputs.' }],
@@ -524,7 +524,7 @@ describe('Action model tools', () => {
 				return fauxAssistantMessage('Done.');
 			},
 		]);
-		const harness = await createContext(provider, new RecordingSessionStore()).init(
+		const harness = await createContext(provider, new RecordingSessionStore()).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				actions: [action],
@@ -579,7 +579,7 @@ describe('Action model tools', () => {
 				return fauxAssistantMessage('Rejected unsafe outputs.');
 			},
 		]);
-		const harness = await createContext(provider, new RecordingSessionStore()).init(
+		const harness = await createContext(provider, new RecordingSessionStore()).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				actions: [nonFinite, nestedUndefined, dateOutput],
@@ -630,7 +630,7 @@ describe('Action model tools', () => {
 				return fauxAssistantMessage('Cyclic handled.');
 			},
 		]);
-		const harness = await createContext(provider, new RecordingSessionStore()).init(
+		const harness = await createContext(provider, new RecordingSessionStore()).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				actions: [invalid, cyclic],

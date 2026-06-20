@@ -70,7 +70,7 @@ describe('registerProvider()', () => {
 			baseUrl: 'http://providers.test/v1',
 			apiKey: 'sk-capture',
 		});
-		const harness = await createContext().init(
+		const harness = await createContext().initializeRootHarness(
 			createAgent(() => ({ model: 'capture-http/capture-model' })),
 		);
 		const session = await harness.session();
@@ -95,7 +95,7 @@ describe('registerProvider()', () => {
 			apiKey: 'sk-secret',
 			headers: { 'x-gateway-tenant': 'acme' },
 		});
-		const harness = await createContext().init(
+		const harness = await createContext().initializeRootHarness(
 			createAgent(() => ({ model: 'capture-auth/capture-model' })),
 		);
 		const session = await harness.session();

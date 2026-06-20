@@ -94,16 +94,14 @@ function createContext(overrides: Partial<FlueContextConfig> = {}) {
 }
 
 describe('FlueContext', () => {
-	it('exposes id payload env and request when the runtime creates a context', () => {
-		const payload = { issue: 'context visibility' };
+	it('exposes id env and request when the runtime creates a context', () => {
 		const env = { API_KEY: 'test-key' };
 		const req = new Request('https://example.com/agents/reviewer', {
 			headers: { authorization: 'Bearer test-token' },
 		});
-		const ctx = createContext({ id: 'agent-reviewer', payload, env, req });
+		const ctx = createContext({ id: 'agent-reviewer', env, req });
 
 		expect(ctx.id).toBe('agent-reviewer');
-		expect(ctx.payload).toBe(payload);
 		expect(ctx.env).toBe(env);
 		expect(ctx.req).toBe(req);
 	});
@@ -281,29 +279,7 @@ describe('FlueContext', () => {
 		]);
 	});
 
-	it('rejects duplicate harness names when init() is called twice with the same name', async () => {
-		const ctx = createContext();
-		const agent = createAgent(() => ({ model: false }));
-
-		await ctx.init(agent, { name: 'reviewer' });
-
-		await expect(ctx.init(agent, { name: 'reviewer' })).rejects.toThrow(
-			'[flue] init() has already been called with name "reviewer" in this request.',
-		);
-	});
-
-	it('allows distinct harnesses when init() is called with distinct names', async () => {
-		const ctx = createContext();
-		const agent = createAgent(() => ({ model: false }));
-
-		const reviewer = await ctx.init(agent, { name: 'reviewer' });
-		const writer = await ctx.init(agent, { name: 'writer' });
-
-		expect(reviewer.name).toBe('reviewer');
-		expect(writer.name).toBe('writer');
-	});
-
-	it('allows the same harness name to retry when an earlier initialization attempt fails', async () => {
+	it('allows root harness initialization to retry after an earlier attempt fails', async () => {
 		let attempt = 0;
 		const ctx = createContext();
 		const agent = createAgent(() => ({
@@ -317,11 +293,9 @@ describe('FlueContext', () => {
 			},
 		}));
 
-		await expect(ctx.init(agent, { name: 'reviewer' })).rejects.toThrow(
-			'temporary sandbox failure',
-		);
-		await expect(ctx.init(agent, { name: 'reviewer' })).resolves.toMatchObject({
-			name: 'reviewer',
+		await expect(ctx.initializeRootHarness(agent)).rejects.toThrow('temporary sandbox failure');
+		await expect(ctx.initializeRootHarness(agent)).resolves.toMatchObject({
+			name: 'default',
 		});
 	});
 });
@@ -341,7 +315,7 @@ describe('session context discovery', () => {
 		ctx.setEventCallback((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				instructions: 'Agent-specific review instructions.',
@@ -382,7 +356,7 @@ describe('session context discovery', () => {
 		ctx.setEventCallback((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 			})),
@@ -423,7 +397,7 @@ describe('session context discovery', () => {
 		ctx.setEventCallback((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				cwd: 'workspace',
@@ -456,7 +430,7 @@ describe('session context discovery', () => {
 		ctx.setEventCallback((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				cwd: 'workspace',

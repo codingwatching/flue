@@ -77,6 +77,7 @@ import { sqlite } from '@flue/runtime/node';
 import {
   Bash,
   InMemoryFs,
+  assertCreatedWorkflow,
   createFlueContext,
   createNodeAgentCoordinator,
   createNodeDispatchQueue,
@@ -109,7 +110,7 @@ const channelModules = {
 ${channelModuleEntries}
 };
 const normalized = normalizeBuiltModules(agentModules, workflowModules, channelModules);
-const { manifest, createdAgents, dispatchAgentNames, workflowHandlers, localWorkflowHandlers, agentRouteMiddleware, workflowRouteMiddleware, channelHandlers } = normalized;
+const { manifest, createdAgents, dispatchAgentNames, workflows, agentRouteMiddleware, workflowRouteMiddleware, channelHandlers } = normalized;
 
 const isLocalMode = process.env.FLUE_MODE === 'local';
 const localCliTarget = process.env.FLUE_CLI_TARGET;
@@ -227,7 +228,7 @@ configureFlueRuntime({
   createAdmission,
   dispatchQueue,
   resolveDispatchAgentName: (agent) => dispatchAgentNames.get(agent),
-  workflowHandlers,
+  workflows,
   agentRouteMiddleware,
   workflowRouteMiddleware,
   channelHandlers,
@@ -309,8 +310,8 @@ function ipcErrorMessage(error, requestId, runId) {
 }
 
 function startLocalWorkflow(name) {
-  const handler = localWorkflowHandlers[name];
-  if (!handler) {
+  const workflow = workflows[name];
+  if (!workflow) {
     failLocalStartup('Unknown workflow: ' + name);
     return;
   }
@@ -335,9 +336,9 @@ function startLocalWorkflow(name) {
       workflowName: name,
       id: runId,
       runId,
-      payload: message.payload,
+      input: message.payload,
       request: localRequest(),
-      handler,
+      workflow,
       createContext: createContextForRequest,
       onEvent: (event) => sendLocalMessage({ type: 'event', requestId: message.requestId, runId, event }),
       runStore,

@@ -167,6 +167,7 @@ import { Agent, getAgentByName } from 'agents';
 import {
   Bash,
   InMemoryFs,
+  assertCreatedWorkflow,
   createFlueContext,
   createSqlRunStore,
   CLOUDFLARE_AGENT_INTERNAL_DISPATCH_PATH,
@@ -231,7 +232,7 @@ const channelModules = {
 ${channelModuleEntries}
 };
 const normalized = normalizeBuiltModules(agentModules, workflowModules, channelModules);
-const { manifest, createdAgents, dispatchAgentNames, workflowHandlers, agentRouteMiddleware, workflowRouteMiddleware, channelHandlers } = normalized;
+const { manifest, createdAgents, dispatchAgentNames, workflows, agentRouteMiddleware, workflowRouteMiddleware, channelHandlers } = normalized;
 const agentIdentities = {
 ${agentIdentityEntries}
 };
@@ -431,14 +432,14 @@ async function dispatchWorkflow(request, doInstance, workflowName) {
   }
 
   if (!parseWorkflowStart(request, workflowName)) return null;
-  const handler = workflowHandlers[workflowName];
-  if (!handler) return null;
+  const workflow = workflows[workflowName];
+  if (!workflow) return null;
   const identity = workflowRuntimeIdentity(workflowName);
   return runWithInstanceContext(doInstance, identity, () => handleWorkflowRequest({
       request,
       workflowName,
       runId: instanceId,
-      handler,
+      workflow,
       runStore: createRunStoreForRequest(doInstance),
       eventStreamStore: createEventStreamStoreForInstance(doInstance),
       createContext: (id_, runId, payload, req, initialEventIndex, dispatchId) => createWorkflowContextForRequest(id_, runId, payload, doInstance, req, initialEventIndex, dispatchId),

@@ -69,7 +69,7 @@ describe('session event image redaction', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({ model: `${provider.getModel().provider}/reviewer` })),
 		);
 		const session = await harness.session();
@@ -110,7 +110,7 @@ describe('session event image redaction', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({ model: `${provider.getModel().provider}/reviewer` })),
 		);
 		const session = await harness.session();
@@ -143,7 +143,7 @@ describe('session event image redaction', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/reviewer`,
 				sandbox: {
@@ -203,7 +203,7 @@ describe('session event image redaction', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({ model: `${provider.getModel().provider}/reviewer` })),
 		);
 		const session = await harness.session();
@@ -240,7 +240,7 @@ describe('session event image redaction', () => {
 		ctx.subscribeEvent((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
+		const harness = await ctx.initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/reviewer`,
 				sandbox: {

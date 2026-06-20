@@ -1,6 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
+import * as v from 'valibot';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createAgent, createWorkflow } from '../src/index.ts';
 import type { FlueContextInternal, FlueRuntime } from '../src/internal.ts';
 import {
 	configureFlueRuntime,
@@ -12,6 +14,7 @@ import {
 import { flue } from '../src/routing.ts';
 import { formatOffset } from '../src/runtime/event-stream-store.ts';
 import { resetFlueRuntimeForTests } from '../src/runtime/flue-app.ts';
+import { createNoopSessionEnv } from './fixtures/session-env.ts';
 import { createTestEventStreamStore } from './helpers/test-event-stream-store.ts';
 
 afterEach(() => {
@@ -37,10 +40,18 @@ function createContext(
 		agentConfig: {
 			resolveModel: () => undefined,
 		},
-		createDefaultEnv: async () => {
-			throw new Error('unexpected sandbox initialization');
-		},
+		createDefaultEnv: async () => createNoopSessionEnv(),
 		defaultStore: new InMemorySessionStore(),
+	});
+}
+
+function workflow(run: (input: unknown) => any) {
+	return createWorkflow({
+		agent: createAgent(() => ({ model: false })),
+		input: v.looseObject({}),
+		async run({ input }) {
+			return run(input);
+		},
 	});
 }
 
@@ -62,11 +73,11 @@ describe('workflow invocation', () => {
 		const app = createApp({
 			target: 'node',
 			manifest: { agents: [], workflows: [{ name: 'daily-report', transports: { http: true } }] },
-			workflowHandlers: {
-				'daily-report': async () => {
+			workflows: {
+				'daily-report': workflow(async () => {
 					await completionGate;
 					return { delivered: true };
-				},
+				}),
 			},
 			createContext,
 			runStore,
@@ -105,8 +116,8 @@ describe('workflow invocation', () => {
 		const app = createApp({
 			target: 'node',
 			manifest: { agents: [], workflows: [{ name: 'daily-report', transports: { http: true } }] },
-			workflowHandlers: {
-				'daily-report': async () => ({ delivered: true }),
+			workflows: {
+				'daily-report': workflow(async () => ({ delivered: true })),
 			},
 			createContext,
 			runStore: new InMemoryRunStore(),
@@ -138,10 +149,10 @@ describe('workflow invocation', () => {
 		const app = createApp({
 			target: 'node',
 			manifest: { agents: [], workflows: [{ name: 'daily-report', transports: { http: true } }] },
-			workflowHandlers: {
-				'daily-report': async () => {
+			workflows: {
+				'daily-report': workflow(async () => {
 					executions++;
-				},
+				}),
 			},
 			createContext,
 		});
@@ -173,10 +184,10 @@ describe('workflow invocation', () => {
 					agents: [],
 					workflows: [{ name: 'daily-report', transports: { http: true } }],
 				},
-				workflowHandlers: {
-					'daily-report': async () => {
+				workflows: {
+					'daily-report': workflow(async () => {
 						executions++;
-					},
+					}),
 				},
 				createContext,
 				runStore,
@@ -200,18 +211,15 @@ describe('workflow invocation', () => {
 		}
 	});
 
-	it('preserves request payload and request access when a workflow handler executes', async () => {
+	it('passes request body through Action input after route middleware runs', async () => {
+		const middleware = vi.fn(async (_c, next) => next());
 		const app = createApp({
 			target: 'node',
 			manifest: { agents: [], workflows: [{ name: 'daily-report', transports: { http: true } }] },
-			workflowHandlers: {
-				'daily-report': async (ctx) => ({
-					payload: ctx.payload,
-					requestUrl: ctx.req?.url,
-					authorization: ctx.req?.headers.get('authorization'),
-					body: await ctx.req?.json(),
-				}),
+			workflows: {
+				'daily-report': workflow(async (input) => ({ input })),
 			},
+			workflowRouteMiddleware: { 'daily-report': middleware },
 			createContext,
 			runStore: new InMemoryRunStore(),
 		});
@@ -219,24 +227,54 @@ describe('workflow invocation', () => {
 		const response = await app.fetch(
 			new Request('http://localhost/flue/workflows/daily-report?wait=result', {
 				method: 'POST',
-				headers: { authorization: 'Bearer test-token', 'content-type': 'application/json' },
+				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ report: 'weekly' }),
 			}),
 		);
-		const body = (await response.json()) as { result: unknown; runId: string };
 
 		expect(response.status).toBe(200);
-		expect(body).toEqual({
-			result: {
-				payload: { report: 'weekly' },
-				requestUrl: 'http://localhost/flue/workflows/daily-report?wait=result',
-				authorization: 'Bearer test-token',
-				body: { report: 'weekly' },
-			},
-			runId: expect.any(String),
-			streamUrl: expect.any(String),
-			offset: '-1',
+		expect(await response.json()).toMatchObject({ result: { input: { report: 'weekly' } } });
+		expect(middleware).toHaveBeenCalledOnce();
+	});
+
+	it('rejects invalid Action input before initializing the workflow Agent or sandbox', async () => {
+		const initialize = vi.fn(() => ({ model: false as const }));
+		const createSessionEnv = vi.fn(async () => createNoopSessionEnv());
+		const invalidWorkflow = createWorkflow({
+			agent: createAgent(initialize),
+			input: v.object({ count: v.number() }),
+			run: async ({ input }) => input,
 		});
+		const app = createApp({
+			target: 'node',
+			manifest: { agents: [], workflows: [{ name: 'validated', transports: { http: true } }] },
+			workflows: { validated: invalidWorkflow },
+			createContext(id, runId, payload, request) {
+				return createFlueContext({
+					id,
+					runId,
+					payload,
+					req: request,
+					env: {},
+					agentConfig: { resolveModel: () => undefined },
+					createDefaultEnv: createSessionEnv,
+					defaultStore: new InMemorySessionStore(),
+				});
+			},
+			runStore: new InMemoryRunStore(),
+		});
+
+		const response = await app.fetch(
+			new Request('http://localhost/flue/workflows/validated?wait=result', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ count: 'invalid' }),
+			}),
+		);
+
+		expect(response.status).toBe(500);
+		expect(initialize).not.toHaveBeenCalled();
+		expect(createSessionEnv).not.toHaveBeenCalled();
 	});
 
 	it('renders a null result when an invoked handler returns undefined', async () => {
@@ -244,8 +282,8 @@ describe('workflow invocation', () => {
 		const app = createApp({
 			target: 'node',
 			manifest: { agents: [], workflows: [{ name: 'daily-report', transports: { http: true } }] },
-			workflowHandlers: {
-				'daily-report': async () => undefined,
+			workflows: {
+				'daily-report': workflow(async () => undefined),
 			},
 			createContext,
 			runStore,
@@ -279,6 +317,97 @@ describe('workflow invocation', () => {
 });
 
 describe('workflow run lifecycle', () => {
+	it('waits for an unawaited Session operation to settle after abort before completing the run', async () => {
+		let markStarted!: () => void;
+		let markAborted!: () => void;
+		let releaseSettlement!: () => void;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		const aborted = new Promise<void>((resolve) => {
+			markAborted = resolve;
+		});
+		const settlementGate = new Promise<void>((resolve) => {
+			releaseSettlement = resolve;
+		});
+		let operationSettled = false;
+		const runStore = new InMemoryRunStore();
+		const eventStreamStore = createTestEventStreamStore();
+		const createdWorkflow = createWorkflow({
+			agent: createAgent(() => ({ model: false })),
+			async run({ harness }) {
+				const session = await harness.session();
+				void session.shell('slow operation');
+				await started;
+				return { delivered: true };
+			},
+		});
+		const app = createApp({
+			target: 'node',
+			manifest: { agents: [], workflows: [{ name: 'cleanup', transports: { http: true } }] },
+			workflows: { cleanup: createdWorkflow },
+			createContext(id, runId, payload, request) {
+				return createFlueContext({
+					id,
+					runId,
+					payload,
+					req: request,
+					env: {},
+					agentConfig: { resolveModel: () => undefined },
+					createDefaultEnv: async () =>
+						createNoopSessionEnv({
+							async exec(_command, options) {
+								markStarted();
+								if (!options?.signal?.aborted) {
+									await new Promise<void>((resolve) =>
+										options?.signal?.addEventListener('abort', () => resolve(), { once: true }),
+									);
+								}
+								markAborted();
+								await settlementGate;
+								operationSettled = true;
+								throw new DOMException('aborted', 'AbortError');
+							},
+						}),
+					defaultStore: new InMemorySessionStore(),
+				});
+			},
+			runStore,
+			eventStreamStore,
+		});
+
+		let responseSettled = false;
+		const responsePromise = Promise.resolve(
+			app.fetch(
+				new Request('http://localhost/flue/workflows/cleanup?wait=result', { method: 'POST' }),
+			),
+		).finally(() => {
+				responseSettled = true;
+			});
+		await aborted;
+		const activeRun = (await runStore.listRuns()).runs[0];
+		expect(activeRun?.status).toBe('active');
+		expect(responseSettled).toBe(false);
+		expect(operationSettled).toBe(false);
+
+		releaseSettlement();
+		const response = await responsePromise;
+		expect(response.status).toBe(200);
+		expect(operationSettled).toBe(true);
+		if (!activeRun) throw new Error('Expected an admitted run.');
+		expect((await runStore.getRun(activeRun.runId))?.status).toBe('completed');
+		const persisted = await eventStreamStore.readEvents(`runs/${activeRun.runId}`, { offset: '-1' });
+		const types = persisted.events.map((entry) => (entry.data as { type: string }).type);
+		expect(types.at(-1)).toBe('run_end');
+		expect(types.lastIndexOf('operation')).toBeLessThan(types.lastIndexOf('run_end'));
+		expect(persisted.closed).toBe(true);
+		const eventCount = persisted.events.length;
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(
+			(await eventStreamStore.readEvents(`runs/${activeRun.runId}`, { offset: '-1' })).events,
+		).toHaveLength(eventCount);
+	});
+
 	it('records an errored terminal run when a workflow handler throws', async () => {
 		const runStore = new InMemoryRunStore();
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -289,10 +418,10 @@ describe('workflow run lifecycle', () => {
 					agents: [],
 					workflows: [{ name: 'daily-report', transports: { http: true } }],
 				},
-				workflowHandlers: {
-					'daily-report': async () => {
+				workflows: {
+					'daily-report': workflow(async () => {
 						throw new Error('report generation failed');
-					},
+					}),
 				},
 				createContext,
 				runStore,
@@ -340,10 +469,10 @@ describe('workflow run lifecycle', () => {
 					agents: [],
 					workflows: [{ name: 'daily-report', transports: { http: true } }],
 				},
-				workflowHandlers: {
-					'daily-report': async () => {
+				workflows: {
+					'daily-report': workflow(async () => {
 						throw new Error('report generation failed');
-					},
+					}),
 				},
 				createContext,
 				runStore,
@@ -374,52 +503,6 @@ describe('workflow run lifecycle', () => {
 		} finally {
 			consoleError.mockRestore();
 		}
-	});
-
-	it('excludes turn_request from the persisted run stream while delivering it in-process', async () => {
-		const eventStreamStore = createTestEventStreamStore();
-		const observed: string[] = [];
-		const app = createApp({
-			target: 'node',
-			manifest: { agents: [], workflows: [{ name: 'daily-report', transports: { http: true } }] },
-			workflowHandlers: {
-				'daily-report': async (ctx) => {
-					const internal = ctx as unknown as FlueContextInternal;
-					internal.subscribeEvent((event) => {
-						observed.push(event.type);
-					});
-					internal.emitEvent({
-						type: 'turn_request',
-						turnId: 'turn-1',
-						purpose: 'agent',
-						model: 'reviewer',
-						provider: 'faux',
-						api: 'faux-chat',
-						input: { systemPrompt: 'secret system prompt', messages: [] },
-					});
-					internal.emitEvent({ type: 'log', level: 'info', message: 'after turn_request' });
-					return { delivered: true };
-				},
-			},
-			createContext,
-			runStore: new InMemoryRunStore(),
-			eventStreamStore,
-		});
-
-		const response = await app.fetch(
-			new Request('http://localhost/flue/workflows/daily-report?wait=result', { method: 'POST' }),
-		);
-		const body = (await response.json()) as { runId: string };
-
-		expect(response.status).toBe(200);
-		// In-process subscribers (observe(), exporters) keep full fidelity.
-		expect(observed).toContain('turn_request');
-		// The durable/public stream never stores or serves turn_request.
-		const persisted = await eventStreamStore.readEvents(`runs/${body.runId}`, { offset: '-1' });
-		const persistedTypes = persisted.events.map((entry) => (entry.data as { type: string }).type);
-		expect(persistedTypes).toContain('log');
-		expect(persistedTypes).not.toContain('turn_request');
-		expect(JSON.stringify(persisted.events)).not.toContain('secret system prompt');
 	});
 
 	it('derives recovery event indexes from the stream head, not the event count', async () => {

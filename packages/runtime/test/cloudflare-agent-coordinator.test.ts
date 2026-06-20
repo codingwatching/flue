@@ -126,7 +126,7 @@ function makeRecoveryContext(options: {
 		},
 	};
 	const ctx = {
-		async initializeCreatedAgent() {
+		async initializeRootHarness() {
 			return {
 				async session() {
 					return session;
@@ -356,7 +356,7 @@ describe('createCloudflareAgentRuntime()', () => {
 			createdAgent: {} as never,
 			createContext: () =>
 				({
-					async initializeCreatedAgent() {
+					async initializeRootHarness() {
 						return {
 							async session() {
 								return session;
@@ -623,7 +623,7 @@ describe('createCloudflareAgentRuntime()', () => {
 			createContext: ({ payload }) => {
 				payloads.push(payload);
 				return {
-					async initializeCreatedAgent() {
+					async initializeRootHarness() {
 						return {
 							async session() {
 								return session;

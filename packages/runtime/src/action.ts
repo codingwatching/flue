@@ -113,18 +113,26 @@ export function isActionDefinition(value: unknown): value is ActionDefinition {
 	return Boolean(value && typeof value === 'object' && definedActions.has(value));
 }
 
-export async function validateAndRunAction<TAction extends ActionDefinition>(
+export interface ParsedActionInput {
+	readonly declared: boolean;
+	readonly value: unknown;
+}
+
+export function parseActionInput(action: ActionDefinition, input?: unknown): ParsedActionInput {
+	if (!action.input) return { declared: false, value: undefined };
+	const parsed = parseValibot(action.input, input);
+	if (!parsed.success) {
+		throw new ActionInputValidationError({ action: action.name, issues: parsed.issues });
+	}
+	return { declared: true, value: parsed.output };
+}
+
+export async function runActionWithParsedInput<TAction extends ActionDefinition>(
 	action: TAction,
 	context: { harness: FlueHarness; log: FlueLogger },
-	input?: unknown,
+	input: ParsedActionInput,
 ): Promise<ActionOutput<TAction>> {
-	let parsedInput: unknown;
-	if (action.input) {
-		const parsed = parseValibot(action.input, input);
-		if (!parsed.success) throw new ActionInputValidationError({ action: action.name, issues: parsed.issues });
-		parsedInput = parsed.output;
-	}
-	const runContext = action.input ? { ...context, input: parsedInput } : context;
+	const runContext = input.declared ? { ...context, input: input.value } : context;
 	const result = await action.run(runContext as never);
 	let output: unknown = result;
 	if (action.output) {
@@ -140,6 +148,14 @@ export async function validateAndRunAction<TAction extends ActionDefinition>(
 	} catch (cause) {
 		throw new ActionOutputSerializationError({ action: action.name, cause });
 	}
+}
+
+export async function validateAndRunAction<TAction extends ActionDefinition>(
+	action: TAction,
+	context: { harness: FlueHarness; log: FlueLogger },
+	input?: unknown,
+): Promise<ActionOutput<TAction>> {
+	return runActionWithParsedInput(action, context, parseActionInput(action, input));
 }
 
 function assertNonEmptyString(value: unknown, label: string): asserts value is string {

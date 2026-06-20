@@ -12,7 +12,7 @@ import type { FlueEvent, SessionData, SessionEnv, SessionStore } from '../src/ty
 describe('FlueHarness', () => {
 	it('uses the default harness name when init() receives no name', async () => {
 		const store = new TrackingSessionStore();
-		const harness = await createContext(createEnv(), store).init(
+		const harness = await createContext(createEnv(), store).initializeRootHarness(
 			createAgent(() => ({ model: false })),
 		);
 
@@ -21,7 +21,7 @@ describe('FlueHarness', () => {
 
 	it('exposes sandbox filesystem operations when a harness is initialized', async () => {
 		const store = new TrackingSessionStore();
-		const harness = await createContext(createEnv(), store).init(
+		const harness = await createContext(createEnv(), store).initializeRootHarness(
 			createAgent(() => ({ model: false })),
 		);
 		const session = await harness.session('workspace');
@@ -50,7 +50,7 @@ describe('FlueHarness', () => {
 	it('executes an out-of-band shell command when shell() is called', async () => {
 		const exec = vi.fn(async () => ({ stdout: 'checked\n', stderr: '', exitCode: 0 }));
 		const store = new TrackingSessionStore();
-		const harness = await createContext(createEnv({ exec }), store).init(
+		const harness = await createContext(createEnv({ exec }), store).initializeRootHarness(
 			createAgent(() => ({ model: false })),
 		);
 
@@ -75,10 +75,7 @@ describe('FlueHarness', () => {
 		ctx.setEventCallback((event) => {
 			events.push(event);
 		});
-		const harness = await ctx.init(
-			createAgent(() => ({ model: false })),
-			{ name: 'reviewer' },
-		);
+		const harness = await ctx.initializeRootHarness(createAgent(() => ({ model: false })));
 
 		await harness.shell('printenv TOKEN', { env: { TOKEN: 'secret-value' }, cwd: '/repo' });
 
@@ -90,7 +87,7 @@ describe('FlueHarness', () => {
 		expect(events).toContainEqual(
 			expect.objectContaining({
 				type: 'tool_start',
-				harness: 'reviewer',
+				harness: 'default',
 				toolName: 'bash',
 				args: { command: 'printenv TOKEN', cwd: '/repo', env: { TOKEN: '<redacted>' } },
 			}),
@@ -101,7 +98,7 @@ describe('FlueHarness', () => {
 	describe('session()', () => {
 		it('gets or creates the default session when no name is provided', async () => {
 			const store = new TrackingSessionStore();
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 
@@ -121,7 +118,7 @@ describe('FlueHarness', () => {
 
 		it('hides internal runtime members when a session is handed to user code', async () => {
 			const store = new TrackingSessionStore();
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 
@@ -155,7 +152,7 @@ describe('FlueHarness', () => {
 				createdAt: '2026-06-02T00:00:00.000Z',
 				updatedAt: '2026-06-02T00:00:00.000Z',
 			} as unknown as SessionData);
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 
@@ -176,7 +173,7 @@ describe('FlueHarness', () => {
 				createdAt: '2026-06-02T00:00:00.000Z',
 				updatedAt: '2026-06-02T00:00:00.000Z',
 			} as unknown as SessionData);
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 
@@ -197,7 +194,7 @@ describe('FlueHarness', () => {
 				createdAt: '2026-06-02T00:00:00.000Z',
 				updatedAt: '2026-06-02T00:00:00.000Z',
 			} as SessionData);
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 
@@ -209,7 +206,7 @@ describe('FlueHarness', () => {
 		it('preserves named conversation state when a session is reopened from persistent storage', async () => {
 			const exec = vi.fn(async (command: string) => ({ stdout: command, stderr: '', exitCode: 0 }));
 			const store = new TrackingSessionStore();
-			const firstHarness = await createContext(createEnv({ exec }), store).init(
+			const firstHarness = await createContext(createEnv({ exec }), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 			const firstSession = await firstHarness.session('review');
@@ -219,7 +216,7 @@ describe('FlueHarness', () => {
 			const preservedEntries = structuredClone(firstRecord?.entries);
 			expect(affinityKey).toMatch(/^aff_[0-9A-HJKMNP-TV-Z]{26}$/);
 			expect(preservedEntries).toHaveLength(3);
-			const secondHarness = await createContext(createEnv({ exec }), store).init(
+			const secondHarness = await createContext(createEnv({ exec }), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 
@@ -252,7 +249,7 @@ describe('FlueHarness', () => {
 	describe('sessions', () => {
 		it('rejects a missing session when get() targets an unknown name', async () => {
 			const store = new TrackingSessionStore();
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 
@@ -262,7 +259,7 @@ describe('FlueHarness', () => {
 
 		it('rejects an existing session when create() targets an existing name', async () => {
 			const store = new TrackingSessionStore();
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 			await harness.session('review');
@@ -272,7 +269,7 @@ describe('FlueHarness', () => {
 
 		it('rejects reserved task names when ordinary session APIs receive an internal session name', async () => {
 			const store = new TrackingSessionStore();
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 
@@ -288,7 +285,7 @@ describe('FlueHarness', () => {
 
 		it('deletes stored conversation state when delete() targets an existing name', async () => {
 			const store = new TrackingSessionStore();
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 			const session = await harness.session('review');
@@ -305,7 +302,7 @@ describe('FlueHarness', () => {
 
 		it('allows deletion when delete() targets an unknown name', async () => {
 			const store = new TrackingSessionStore();
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 
@@ -327,7 +324,7 @@ describe('FlueHarness', () => {
 						calls.push(`finish:${storageKey}`);
 					},
 				} as never,
-			}).init(createAgent(() => ({ model: false })));
+			}).initializeRootHarness(createAgent(() => ({ model: false })));
 
 			await harness.sessions.delete('review');
 
@@ -341,7 +338,7 @@ describe('FlueHarness', () => {
 		it('applies session management requests in order when concurrent requests target the same name', async () => {
 			const store = new TrackingSessionStore();
 			store.blockLoads();
-			const harness = await createContext(createEnv(), store).init(
+			const harness = await createContext(createEnv(), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 
@@ -370,7 +367,7 @@ describe('FlueSession', () => {
 			const harness = await createContext(
 				createEnv({ exec: async () => ({ stdout: 'reviewed', stderr: '', exitCode: 0 }) }),
 				store,
-			).init(createAgent(() => ({ model: false })));
+			).initializeRootHarness(createAgent(() => ({ model: false })));
 			const session = await harness.session('review');
 
 			await expect(session.shell('printf reviewed')).resolves.toEqual({
@@ -418,7 +415,7 @@ describe('FlueSession', () => {
 					},
 				}),
 				store,
-			).init(createAgent(() => ({ model: false })));
+			).initializeRootHarness(createAgent(() => ({ model: false })));
 			const session = await harness.session('review');
 
 			await expect(session.shell('exit 9')).rejects.toThrow('sandbox unavailable');
@@ -448,7 +445,7 @@ describe('FlueSession', () => {
 		it('redacts environment values from persisted arguments when a command receives environment variables', async () => {
 			const exec = vi.fn(async () => ({ stdout: 'configured', stderr: '', exitCode: 0 }));
 			const store = new TrackingSessionStore();
-			const harness = await createContext(createEnv({ exec }), store).init(
+			const harness = await createContext(createEnv({ exec }), store).initializeRootHarness(
 				createAgent(() => ({ model: false })),
 			);
 			const session = await harness.session('review');
@@ -505,7 +502,7 @@ describe('FlueSession', () => {
 				},
 			}),
 			store,
-		).init(createAgent(() => ({ model: false })));
+		).initializeRootHarness(createAgent(() => ({ model: false })));
 		const session = await harness.session('review');
 		const shell = session.shell('wait for review');
 		await execStarted;
@@ -524,7 +521,7 @@ describe('FlueSession', () => {
 
 	it('rejects new operations when the session has been deleted', async () => {
 		const store = new TrackingSessionStore();
-		const harness = await createContext(createEnv(), store).init(
+		const harness = await createContext(createEnv(), store).initializeRootHarness(
 			createAgent(() => ({ model: false })),
 		);
 		const session = await harness.session('review');
@@ -544,7 +541,7 @@ describe('FlueSession', () => {
 					calls.push(`finish:${storageKey}`);
 				},
 			} as never,
-		}).init(createAgent(() => ({ model: false })));
+		}).initializeRootHarness(createAgent(() => ({ model: false })));
 		const session = await harness.session('review');
 
 		await session.delete();
@@ -558,7 +555,7 @@ describe('FlueSession', () => {
 
 	it('shares deletion work when delete() is called concurrently', async () => {
 		const store = new TrackingSessionStore();
-		const harness = await createContext(createEnv(), store).init(
+		const harness = await createContext(createEnv(), store).initializeRootHarness(
 			createAgent(() => ({ model: false })),
 		);
 		const session = await harness.session('review');
@@ -579,7 +576,7 @@ describe('FlueSession', () => {
 
 	it('resolves without repeating storage work when delete() is called after deletion completes', async () => {
 		const store = new TrackingSessionStore();
-		const harness = await createContext(createEnv(), store).init(
+		const harness = await createContext(createEnv(), store).initializeRootHarness(
 			createAgent(() => ({ model: false })),
 		);
 		const session = await harness.session('review');

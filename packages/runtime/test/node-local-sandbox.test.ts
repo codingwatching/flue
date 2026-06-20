@@ -27,7 +27,7 @@ describe('local()', () => {
 		const previousCwd = process.cwd();
 		try {
 			process.chdir(directory);
-			const harness = await createContext().init(
+			const harness = await createContext().initializeRootHarness(
 				createAgent(() => ({ model: false, sandbox: local() })),
 			);
 
@@ -48,7 +48,7 @@ describe('local()', () => {
 		const previousCwd = process.cwd();
 		try {
 			process.chdir(directory);
-			const harness = await createContext().init(
+			const harness = await createContext().initializeRootHarness(
 				createAgent(() => ({ model: false, sandbox: local(), cwd: 'workspace' })),
 			);
 
@@ -70,7 +70,7 @@ describe('local()', () => {
 	it('uses local({ cwd }) as the base directory when a relative created-agent cwd is also configured', async () => {
 		const directory = await mkdtemp(join(tmpdir(), 'flue-local-base-cwd-'));
 		await mkdir(join(directory, 'workspace'));
-		const harness = await createContext().init(
+		const harness = await createContext().initializeRootHarness(
 			createAgent(() => ({ model: false, sandbox: local({ cwd: directory }), cwd: 'workspace' })),
 		);
 
@@ -85,7 +85,7 @@ describe('local()', () => {
 	});
 
 	it('executes shell commands with bash when bash is available on the host', async () => {
-		const harness = await createContext().init(
+		const harness = await createContext().initializeRootHarness(
 			createAgent(() => ({ model: false, sandbox: local() })),
 		);
 
@@ -104,7 +104,7 @@ describe('local()', () => {
 		process.env.PATH = '/flue-test-bin';
 		process.env.FLUE_LOCAL_TEST_SECRET = 'host-secret';
 		try {
-			const harness = await createContext().init(
+			const harness = await createContext().initializeRootHarness(
 				createAgent(() => ({ model: false, sandbox: local() })),
 			);
 
@@ -126,7 +126,7 @@ describe('local()', () => {
 	});
 
 	it('exposes explicit variables when local() receives env overrides', async () => {
-		const harness = await createContext().init(
+		const harness = await createContext().initializeRootHarness(
 			createAgent(() => ({
 				model: false,
 				sandbox: local({ env: { FLUE_LOCAL_TEST_EXPLICIT: 'available' } }),
@@ -144,7 +144,7 @@ describe('local()', () => {
 		const previousHome = process.env.HOME;
 		process.env.HOME = '/flue-test-home';
 		try {
-			const harness = await createContext().init(
+			const harness = await createContext().initializeRootHarness(
 				createAgent(() => ({ model: false, sandbox: local({ env: { HOME: undefined } }) })),
 			);
 
@@ -163,7 +163,7 @@ describe('local()', () => {
 		const previousHome = process.env.HOME;
 		process.env.HOME = '/flue-test-home-before-init';
 		try {
-			const harness = await createContext().init(
+			const harness = await createContext().initializeRootHarness(
 				createAgent(() => ({ model: false, sandbox: local() })),
 			);
 			process.env.HOME = '/flue-test-home-after-init';
@@ -180,7 +180,7 @@ describe('local()', () => {
 	});
 
 	it('layers per-command variables over sandbox variables when exec receives env overrides', async () => {
-		const harness = await createContext().init(
+		const harness = await createContext().initializeRootHarness(
 			createAgent(() => ({
 				model: false,
 				sandbox: local({
@@ -202,7 +202,7 @@ describe('local()', () => {
 	});
 
 	it('returns stdout stderr and exit code when a local command exits nonzero', async () => {
-		const harness = await createContext().init(
+		const harness = await createContext().initializeRootHarness(
 			createAgent(() => ({ model: false, sandbox: local() })),
 		);
 
@@ -215,7 +215,7 @@ describe('local()', () => {
 
 	it('creates parent directories when a filesystem write targets a nested path', async () => {
 		const directory = await mkdtemp(join(tmpdir(), 'flue-local-write-'));
-		const harness = await createContext().init(
+		const harness = await createContext().initializeRootHarness(
 			createAgent(() => ({ model: false, sandbox: local({ cwd: directory }) })),
 		);
 
@@ -230,7 +230,7 @@ describe('local()', () => {
 		const directory = await mkdtemp(join(tmpdir(), 'flue-local-stat-symlink-'));
 		await writeFile(join(directory, 'target.txt'), 'hello');
 		await symlink(join(directory, 'target.txt'), join(directory, 'link.txt'));
-		const harness = await createContext().init(
+		const harness = await createContext().initializeRootHarness(
 			createAgent(() => ({ model: false, sandbox: local({ cwd: directory }) })),
 		);
 
@@ -250,7 +250,7 @@ describe('local()', () => {
 	it('kills backgrounded grandchild processes when a local shell command is aborted', async () => {
 		const directory = await mkdtemp(join(tmpdir(), 'flue-local-abort-tree-'));
 		try {
-			const harness = await createContext().init(
+			const harness = await createContext().initializeRootHarness(
 				createAgent(() => ({ model: false, sandbox: local({ cwd: directory }) })),
 			);
 			const controller = new AbortController();
@@ -285,7 +285,7 @@ describe('local()', () => {
 
 	it('rejects invalid env configuration when local() receives a non-record env value', async () => {
 		await expect(
-			createContext().init(
+			createContext().initializeRootHarness(
 				createAgent(() => ({ model: false, sandbox: local({ env: true as never }) })),
 			),
 		).rejects.toThrow('[flue] local() `env` must be a Record<string, string | undefined>.');

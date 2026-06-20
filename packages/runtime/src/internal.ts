@@ -29,7 +29,7 @@ export type {
 	SubmissionDurability,
 } from './agent-execution-store.ts';
 export type { FlueContextConfig, FlueContextInternal } from './client.ts';
-export { createFlueContext } from './client.ts';
+export { createFlueContext, initializeRootHarness } from './client.ts';
 // `FlueRegistry` (Durable Object class) and the composite Cloudflare run
 // store/index factories live in the `@flue/runtime/cloudflare/internal`
 // subpath because that entry pulls in `cloudflare:workers`, a virtual module
@@ -64,7 +64,7 @@ export type {
 	InvokeWorkflowAttachedOptions,
 	StartWorkflowAdmissionFn,
 	WorkflowAttachedInvocationResult,
-	WorkflowHandler,
+	WorkflowRegistry,
 } from './runtime/handle-agent.ts';
 // Runtime modules consumed by the generated server entries.
 //
@@ -80,6 +80,7 @@ export type {
 //
 // The user-facing `flue()` itself is re-exported from `@flue/runtime/routing`, not here.
 export {
+	assertCreatedWorkflow,
 	failRecoveredRun,
 	handleWorkflowRequest,
 	invokeDirectAttached,

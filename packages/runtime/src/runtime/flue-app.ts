@@ -33,7 +33,7 @@ import {
 	type CreateContextFn,
 	handleAgentRequest,
 	handleWorkflowRequest,
-	type WorkflowHandler,
+	type WorkflowRegistry,
 } from './handle-agent.ts';
 import { handleStreamHead, handleStreamRead } from './handle-stream-routes.ts';
 import { generateWorkflowRunId } from './ids.ts';
@@ -57,7 +57,7 @@ export interface FlueRuntime {
 
 	// ─── Node-only ──────────────────────────────────────────────────────────
 
-	workflowHandlers?: Record<string, WorkflowHandler>;
+	workflows?: WorkflowRegistry;
 	agentRouteMiddleware?: Record<string, MiddlewareHandler>;
 	workflowRouteMiddleware?: Record<string, MiddlewareHandler>;
 	channelHandlers?: Record<string, Record<string, (c: Context) => Response | Promise<Response>>>;
@@ -485,15 +485,15 @@ const workflowRouteHandler: MiddlewareHandler = async (c) => {
 
 	return runAttachedMiddleware(c, rt.workflowRouteMiddleware?.[name], async () => {
 		if (rt.target === 'node') {
-			const handler = rt.workflowHandlers?.[name];
+			const workflow = rt.workflows?.[name];
 			const createContext = rt.createContext;
-			if (!handler || !createContext) {
-				throw new Error('[flue] Node runtime is missing workflow handler configuration.');
+			if (!workflow || !createContext) {
+				throw new Error('[flue] Node runtime is missing workflow configuration.');
 			}
 			return handleWorkflowRequest({
 				request,
 				workflowName: name,
-				handler,
+				workflow,
 				createContext,
 				runStore: rt.runStore,
 				eventStreamStore: requireNodeEventStreamStore(rt),

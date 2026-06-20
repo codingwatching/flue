@@ -10,17 +10,42 @@ type NormalizeBuiltModules = (
 		agents: Array<Record<string, unknown>>;
 		workflows: Array<Record<string, unknown>>;
 	};
+	workflows: Record<string, unknown>;
 	channelHandlers: Record<string, Record<string, (value: unknown) => unknown>>;
 };
 
 // The normalization function ships as generated source inside built server
 // entries; evaluate it the same way a generated entry does.
 const normalizeBuiltModules = new Function(
+	'assertCreatedWorkflow',
 	`${generateBuiltModuleNormalizationSource()}; return normalizeBuiltModules;`,
-)() as NormalizeBuiltModules;
+)(
+	(value: unknown, name: string) => {
+		const workflow = value as { __flueCreatedWorkflow?: unknown; agent?: unknown; action?: unknown };
+		if (
+			!workflow ||
+			workflow.__flueCreatedWorkflow !== true ||
+			!workflow.agent ||
+			!workflow.action
+		) {
+			throw new Error(`[flue] Workflow "${name}" must default-export createWorkflow(...).`);
+		}
+	},
+) as NormalizeBuiltModules;
 
 function agentModule(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return { default: { __flueCreatedAgent: true, initialize: () => ({}) }, ...overrides };
+}
+
+function workflowModule(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		default: {
+			__flueCreatedWorkflow: true,
+			agent: { __flueCreatedAgent: true, initialize: () => ({}) },
+			action: { __flueAction: true },
+		},
+		...overrides,
+	};
 }
 
 describe('normalizeBuiltModules()', () => {
@@ -56,6 +81,24 @@ describe('normalizeBuiltModules()', () => {
 		expect(() =>
 			normalizeBuiltModules({ support: agentModule({ description: '   ' }) }, {}),
 		).toThrow('[flue] Agent "support" description export must be a non-empty string.');
+	});
+
+	it('normalizes genuine default-exported Created Workflows separately from route middleware', () => {
+		const route = () => undefined;
+		const module = workflowModule({ route });
+
+		const normalized = normalizeBuiltModules({}, { report: module });
+
+		expect(normalized.workflows).toEqual({ report: module.default });
+		expect(normalized.manifest.workflows).toEqual([
+			{ name: 'report', transports: { http: true } },
+		]);
+	});
+
+	it('rejects legacy workflow run exports', () => {
+		expect(() => normalizeBuiltModules({}, { report: { run: () => undefined } })).toThrow(
+			'[flue] Workflow "report" must default-export createWorkflow(...).',
+		);
 	});
 
 	it('normalizes discovered channel routes into a method and path lookup', () => {

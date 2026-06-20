@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createFlueContext } from '../src/client.ts';
+import { createAgent, createWorkflow } from '../src/index.ts';
 import { ModelNotConfiguredError } from '../src/errors.ts';
 import { InMemoryRunStore } from '../src/node/run-store.ts';
 import { MAX_IMAGE_DATA_LENGTH } from '../src/persisted-images.ts';
@@ -13,6 +14,7 @@ import {
 	resetFlueRuntimeForTests,
 } from '../src/runtime/flue-app.ts';
 import { InMemorySessionStore } from '../src/session.ts';
+import { createNoopSessionEnv } from './fixtures/session-env.ts';
 import { createTestEventStreamStore } from './helpers/test-event-stream-store.ts';
 
 afterEach(() => {
@@ -455,7 +457,12 @@ describe('flue()', () => {
 				agents: [],
 				workflows: [{ name: 'daily-report', transports: { http: true } }],
 			},
-			workflowHandlers: { 'daily-report': () => ({ delivered: true }) },
+			workflows: {
+				'daily-report': createWorkflow({
+					agent: createAgent(() => ({ model: false })),
+					run: async () => ({ delivered: true }),
+				}),
+			},
 			createContext: createTestContext,
 			runStore: new InMemoryRunStore(),
 			eventStreamStore: createTestEventStreamStore(),
@@ -1013,7 +1020,12 @@ describe('flue()', () => {
 				agents: [],
 				workflows: [{ name: 'daily-report', transports: { http: true } }],
 			},
-			workflowHandlers: { 'daily-report': (ctx) => ({ payload: ctx.payload }) },
+			workflows: {
+				'daily-report': createWorkflow({
+					agent: createAgent(() => ({ model: false })),
+					run: async () => undefined,
+				}),
+			},
 			createContext: createTestContext,
 			runStore: new InMemoryRunStore(),
 			eventStreamStore: createTestEventStreamStore(),
@@ -1028,7 +1040,7 @@ describe('flue()', () => {
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { result: unknown; runId: string; streamUrl: string };
 		expect(body).toEqual({
-			result: { payload: {} },
+			result: null,
 			runId: expect.stringMatching(/^run_[0-9A-HJKMNP-TV-Z]{26}$/),
 			streamUrl: expect.any(String),
 			offset: '-1',
@@ -1203,7 +1215,7 @@ function createTestContext(id: string, runId: string | undefined, payload: unkno
 		agentConfig: {
 			resolveModel: () => undefined,
 		},
-		createDefaultEnv: async () => ({}) as never,
+		createDefaultEnv: async () => createNoopSessionEnv(),
 		defaultStore: new InMemorySessionStore(),
 	});
 }

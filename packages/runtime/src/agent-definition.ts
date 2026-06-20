@@ -63,21 +63,20 @@ export function defineAgentProfile(profile: AgentProfile): AgentProfile {
 
 /**
  * Creates an agent initializer. Default-export the returned value from an
- * `agents/<name>.ts` module to define an addressable agent, or pass it to
- * `ctx.init()` inside a workflow.
+ * `agents/<name>.ts` module to define an addressable agent, or bind it to a
+ * created workflow.
  *
- * The initializer runs whenever the runtime initializes a harness from the
- * created agent: when a workflow calls `ctx.init()`, and when the runtime
- * prepares an addressable agent interaction. Do not treat it as a one-time
+ * The initializer runs whenever a runner initializes a root harness from the
+ * created agent. Do not treat it as a one-time
  * constructor for a persistent agent instance id. Return a runtime config
  * object with `model: '<provider>/<model>'`, `model: false`, or a profile with
  * its own model field.
  */
-export function createAgent<TPayload = unknown, TEnv = Record<string, any>>(
+export function createAgent<TEnv = Record<string, any>>(
 	initialize: (
-		context: AgentCreateContext<TPayload, TEnv>,
+		context: AgentCreateContext<TEnv>,
 	) => AgentRuntimeConfig | Promise<AgentRuntimeConfig>,
-): CreatedAgent<TPayload, TEnv> {
+): CreatedAgent<TEnv> {
 	if (typeof initialize !== 'function') {
 		throw new Error('[flue] createAgent() requires an initializer function.');
 	}

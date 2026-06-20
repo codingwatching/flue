@@ -22,7 +22,11 @@ import type {
 import { streamSimple } from '@earendil-works/pi-ai';
 import type * as v from 'valibot';
 import { abortErrorFor, createCallHandle } from './abort.ts';
-import { validateAndRunAction, type ActionDefinition } from './action.ts';
+import {
+	parseActionInput,
+	runActionWithParsedInput,
+	type ActionDefinition,
+} from './action.ts';
 import {
 	createActivateSkillTool,
 	createPackagedSkillReadTool,
@@ -416,6 +420,9 @@ export class Session implements FlueSession, AgentSubmissionSession {
 	private deletionPromise: Promise<void> | undefined;
 	private activeOperation: OperationKind | undefined;
 	private activeOperationId: string | undefined;
+	private activeOperationSettlement: Promise<void> = Promise.resolve();
+	private resolveActiveOperationSettlement: (() => void) | undefined;
+	private closePromise: Promise<void> | undefined;
 	private toolStartTimes = new Map<string, number>();
 	private modelToolSources = new WeakMap<AgentTool<any>, 'builtin' | 'adapter' | 'framework'>();
 	private turnStartTime: number | undefined;
@@ -1064,17 +1071,30 @@ export class Session implements FlueSession, AgentSubmissionSession {
 		for (const harness of this.activeActionHarnesses) void harness.close();
 	}
 
+	async settle(): Promise<void> {
+		this.abort();
+		await this.activeOperationSettlement;
+		await Promise.allSettled([
+			this.pendingSave,
+			...[...this.activeTasks].map((task) => task.settle()),
+			...[...this.activeActionHarnesses].map((harness) => harness.close()),
+		]);
+	}
+
 	/**
 	 * Detach a child task session after its task completes. Aborts pending
 	 * work and fires the onDelete callback but does NOT delete stored data —
 	 * child session storage is parent-owned and cleaned up when the parent
 	 * session is deleted via the session-tree cascade.
 	 */
-	close(): void {
-		if (this.deleted) return;
+	close(): Promise<void> {
+		if (this.closePromise) return this.closePromise;
 		this.deleted = true;
 		this.abort();
-		this.onDelete?.();
+		this.closePromise = this.settle().finally(() => {
+			this.onDelete?.();
+		});
+		return this.closePromise;
 	}
 
 	delete(): Promise<void> {
@@ -1225,6 +1245,7 @@ export class Session implements FlueSession, AgentSubmissionSession {
 		if (this.taskDepth >= MAX_TASK_DEPTH) {
 			throw new TaskDepthExceededError({ maxDepth: MAX_TASK_DEPTH });
 		}
+		const parsedInput = parseActionInput(action, action.input ? input : undefined);
 		const invocationId = crypto.randomUUID();
 		const actionController = new AbortController();
 		const actionSignal = signal
@@ -1262,10 +1283,10 @@ export class Session implements FlueSession, AgentSubmissionSession {
 		});
 		this.activeActionHarnesses.add(harness);
 		try {
-			const output = await validateAndRunAction(
+			const output = await runActionWithParsedInput(
 				action,
 				{ harness, log: this.createActionLogger(action.name, toolCallId) },
-				action.input ? input : undefined,
+				parsedInput,
 			);
 			return {
 				content: [{ type: 'text', text: output === undefined ? 'null' : JSON.stringify(output) }],
@@ -1597,8 +1618,8 @@ export class Session implements FlueSession, AgentSubmissionSession {
 		} finally {
 			if (signal && abortListener) signal.removeEventListener('abort', abortListener);
 			if (child) {
+				await child.close();
 				this.activeTasks.delete(child);
-				child.close();
 			}
 		}
 	}
@@ -1672,10 +1693,15 @@ export class Session implements FlueSession, AgentSubmissionSession {
 			throw new SessionBusyError({ session: this.name, activeOperation: this.activeOperation });
 		}
 		this.activeOperation = operation;
+		this.activeOperationSettlement = new Promise<void>((resolve) => {
+			this.resolveActiveOperationSettlement = resolve;
+		});
 		try {
 			return await fn();
 		} finally {
 			this.activeOperation = undefined;
+			this.resolveActiveOperationSettlement?.();
+			this.resolveActiveOperationSettlement = undefined;
 		}
 	}
 

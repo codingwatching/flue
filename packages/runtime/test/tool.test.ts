@@ -56,7 +56,7 @@ function createContext(
 }
 
 async function createSession(provider: FauxProviderRegistration) {
-	const harness = await createContext(provider).init(
+	const harness = await createContext(provider).initializeRootHarness(
 		createAgent(() => ({ model: `${provider.getModel().provider}/${provider.getModel().id}` })),
 	);
 	return harness.session();
@@ -221,7 +221,7 @@ describe('custom tools', () => {
 
 	it('rejects duplicate custom tool names when an operation assembles its active tools', async () => {
 		const provider = createProvider();
-		const harness = await createContext(provider).init(
+		const harness = await createContext(provider).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				tools: [
@@ -259,7 +259,7 @@ describe('custom tools', () => {
 				return fauxAssistantMessage('Done.');
 			},
 		]);
-		const harness = await createContext(provider).init(
+		const harness = await createContext(provider).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				tools: [
@@ -335,7 +335,7 @@ describe('custom tools', () => {
 				return 'interrupted';
 			},
 		});
-		const harness = await createContext(provider).init(
+		const harness = await createContext(provider).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				tools: [lookup],
@@ -379,7 +379,7 @@ describe('custom tools', () => {
 			parameters: v.object({ query: v.string() }),
 			execute: async () => 'Found the requested value.',
 		});
-		const harness = await createContext(provider, store).init(
+		const harness = await createContext(provider, store).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				tools: [lookup],
@@ -419,7 +419,7 @@ describe('custom tools', () => {
 			parameters: v.object({ query: v.string() }),
 			execute: async () => 'Found the requested value.',
 		});
-		const harness = await createContext(provider, store).init(
+		const harness = await createContext(provider, store).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				tools: [lookup],
@@ -448,7 +448,7 @@ describe('custom tools', () => {
 			parameters: v.object({ query: v.string() }),
 			execute,
 		});
-		const harness = await createContext(provider).init(
+		const harness = await createContext(provider).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				tools: [lookup],
@@ -481,7 +481,7 @@ describe('custom tools', () => {
 				return fauxAssistantMessage('Second.');
 			},
 		]);
-		const harness = await createContext(provider).init(
+		const harness = await createContext(provider).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				tools: [
@@ -538,7 +538,7 @@ describe('custom tools', () => {
 			}),
 			execute,
 		});
-		const harness = await createContext(provider).init(
+		const harness = await createContext(provider).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				tools: [lookup],
@@ -591,7 +591,7 @@ describe('custom tools', () => {
 				return 'ok';
 			},
 		});
-		const harness = await createContext(provider).init(
+		const harness = await createContext(provider).initializeRootHarness(
 			createAgent(() => ({
 				model: `${provider.getModel().provider}/${provider.getModel().id}`,
 				tools: [lookup],

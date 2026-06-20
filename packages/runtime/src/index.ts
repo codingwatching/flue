@@ -65,7 +65,6 @@ export type {
 	ActionSessionRef,
 	AgentCreateContext,
 	AgentDispatchRequest,
-	AgentHarnessOptions,
 	AgentProfile,
 	AgentRouteHandler,
 	AgentRuntimeConfig,

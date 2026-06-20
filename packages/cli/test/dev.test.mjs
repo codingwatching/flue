@@ -22,7 +22,7 @@ test('restarts after discovered config changes and recovers after invalid config
 	writeWorkflow(root);
 	fs.writeFileSync(
 		path.join(root, 'workflows', 'daily.report.mjs'),
-		`export async function run() { return { ok: true }; }\n`,
+		`import { createAgent, createWorkflow } from '@flue/runtime';\nexport default createWorkflow({ agent: createAgent(() => ({ model: false })), async run() { return { ok: true }; } });\n`,
 	);
 	fs.writeFileSync(path.join(root, '.config-helper.mjs'), `export default 'dist-one';\n`);
 	fs.writeFileSync(
@@ -102,7 +102,7 @@ function writeWorkflow(root) {
 	fs.mkdirSync(path.join(root, 'workflows'));
 	fs.writeFileSync(
 		path.join(root, 'workflows', 'smoke.mjs'),
-		`export const route = async (_c, next) => next();\nexport async function run() { return { ok: true, internalDevSession: process.env.FLUE_INTERNAL_DEV_SESSION }; }\n`,
+		`import { createAgent, createWorkflow } from '@flue/runtime';\nexport const route = async (_c, next) => next();\nexport default createWorkflow({ agent: createAgent(() => ({ model: false })), async run() { return { ok: true }; } });\n`,
 	);
 }
 
@@ -172,7 +172,7 @@ async function waitForServer(port, logs = () => '') {
 		},
 		() => `Timed out waiting for server on port ${port}\n\n${logs()}`,
 	);
-	assert.equal(body.result.internalDevSession, undefined);
+	assert.deepEqual(body.result, { ok: true });
 }
 
 function waitForServerDown(port) {

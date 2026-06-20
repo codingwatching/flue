@@ -39,7 +39,7 @@ async function createSession(
 		defaultStore: new InMemorySessionStore(),
 	});
 	if (options.onEvent) ctx.setEventCallback(options.onEvent);
-	const harness = await ctx.init(
+	const harness = await ctx.initializeRootHarness(
 		createAgent(() => ({
 			model: `${provider.getModel().provider}/${provider.getModel().id}`,
 			skills: options.skills,

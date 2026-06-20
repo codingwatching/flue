@@ -24,8 +24,7 @@ function normalizeBuiltModules(agentModules, workflowModules, channelModules = {
   const manifest = { agents: [], workflows: [] };
   const createdAgents = {};
   const dispatchAgentNames = new Map();
-  const workflowHandlers = {};
-  const localWorkflowHandlers = {};
+  const workflows = {};
   const agentRouteMiddleware = {};
   const workflowRouteMiddleware = {};
   const channelHandlers = {};
@@ -46,13 +45,12 @@ function normalizeBuiltModules(agentModules, workflowModules, channelModules = {
   }
 
   for (const [name, mod] of Object.entries(workflowModules)) {
-    if (typeof mod.run !== 'function') throw new Error('[flue] Workflow "' + name + '" must export a callable run value.');
+    assertCreatedWorkflow(mod.default, name);
     if (mod.route !== undefined && typeof mod.route !== 'function') throw new Error('[flue] Workflow "' + name + '" route export must be a callable Hono middleware value.');
     const transports = {};
     if (typeof mod.route === 'function') transports.http = true;
     manifest.workflows.push({ name, transports });
-    localWorkflowHandlers[name] = mod.run;
-    if (transports.http) workflowHandlers[name] = mod.run;
+    workflows[name] = mod.default;
     if (typeof mod.route === 'function') workflowRouteMiddleware[name] = mod.route;
   }
 
@@ -75,7 +73,7 @@ function normalizeBuiltModules(agentModules, workflowModules, channelModules = {
     channelHandlers[name] = routes;
   }
 
-  return { manifest, createdAgents, dispatchAgentNames, workflowHandlers, localWorkflowHandlers, agentRouteMiddleware, workflowRouteMiddleware, channelHandlers };
+  return { manifest, createdAgents, dispatchAgentNames, workflows, agentRouteMiddleware, workflowRouteMiddleware, channelHandlers };
 }
 
 `;

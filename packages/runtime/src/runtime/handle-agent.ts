@@ -1,7 +1,9 @@
 /** Shared per-agent HTTP dispatcher for the Node and Cloudflare targets. */
 
 import * as v from 'valibot';
+import { parseActionInput, runActionWithParsedInput } from '../action.ts';
 import type { FlueContextInternal } from '../client.ts';
+import { isCreatedWorkflow, type CreatedWorkflow } from '../workflow-definition.ts';
 import {
 	InvalidRequestError,
 	parseJsonBody,
@@ -27,7 +29,13 @@ import { generateWorkflowRunId } from './ids.ts';
 import { isBufferedRunEvent, isStreamExcludedEvent, type RunStore } from './run-store.ts';
 import { DirectAgentPayloadSchema } from './schemas.ts';
 
-export type WorkflowHandler = (ctx: FlueContextInternal) => unknown | Promise<unknown>;
+export type WorkflowRegistry = Record<string, CreatedWorkflow>;
+
+export function assertCreatedWorkflow(value: unknown, name: string): asserts value is CreatedWorkflow {
+	if (!isCreatedWorkflow(value)) {
+		throw new Error(`[flue] Workflow "${name}" must default-export createWorkflow(...).`);
+	}
+}
 
 export function assertAgentDispatchAdmissionInput(input: unknown): asserts input is DispatchInput {
 	if (!isDispatchInput(input))
@@ -101,7 +109,7 @@ export interface HandleAgentOptions {
 export interface HandleWorkflowOptions {
 	request: Request;
 	workflowName: string;
-	handler: WorkflowHandler;
+	workflow: CreatedWorkflow;
 	createContext: CreateContextFn;
 	startWorkflowAdmission?: StartWorkflowAdmissionFn;
 	runStore?: RunStore;
@@ -187,20 +195,20 @@ export async function handleAgentRequest(opts: HandleAgentOptions): Promise<Resp
 }
 
 export async function handleWorkflowRequest(opts: HandleWorkflowOptions): Promise<Response> {
-	const { request, workflowName, handler, createContext, runStore, eventStreamStore } = opts;
+	const { request, workflowName, workflow, createContext, runStore, eventStreamStore } = opts;
 	const startWorkflowAdmission = opts.startWorkflowAdmission ?? defaultStartWorkflowAdmission;
 	const runId = opts.runId ?? generateWorkflowRunId();
 
 	try {
-		const payload = await parseJsonBody(request);
+		const input = await parseJsonBody(request);
 		const wait = new URL(request.url).searchParams.get('wait');
 
 		const execution = await prepareWorkflowExecution({
 			workflowName,
 			id: runId,
 			runId,
-			handler,
-			payload,
+			workflow,
+			input,
 			request,
 			createContext,
 			startWorkflowAdmission,
@@ -221,8 +229,8 @@ export interface InvokeWorkflowAttachedOptions {
 	workflowName: string;
 	id: string;
 	runId: string;
-	handler: WorkflowHandler;
-	payload: unknown;
+	workflow: CreatedWorkflow;
+	input: unknown;
 	request: Request;
 	createContext: CreateContextFn;
 	onEvent?: FlueEventCallback;
@@ -256,8 +264,8 @@ interface WorkflowAdmissionOptions {
 	workflowName: string;
 	id: string;
 	runId: string;
-	handler: WorkflowHandler;
-	payload: unknown;
+	workflow: CreatedWorkflow;
+	input: unknown;
 	request: Request;
 	createContext: CreateContextFn;
 	startWorkflowAdmission: StartWorkflowAdmissionFn;
@@ -274,7 +282,7 @@ interface AdmittedWorkflowExecution {
 	runStore: RunStore;
 	lifecycle: WorkflowRunLifecycle;
 	startWorkflowAdmission: StartWorkflowAdmissionFn;
-	handler: WorkflowHandler;
+	workflow: CreatedWorkflow;
 	completion?: Promise<unknown>;
 }
 
@@ -285,8 +293,8 @@ async function prepareWorkflowExecution(
 		workflowName,
 		id,
 		runId,
-		handler,
-		payload,
+		workflow,
+		input,
 		request,
 		createContext,
 		startWorkflowAdmission,
@@ -298,7 +306,7 @@ async function prepareWorkflowExecution(
 		workflowName,
 		id,
 		runId,
-		payload,
+		input,
 		request,
 		createContext,
 		runStore,
@@ -315,19 +323,19 @@ async function prepareWorkflowExecution(
 		runStore,
 		lifecycle,
 		startWorkflowAdmission,
-		handler,
+		workflow,
 	};
 }
 
 function startWorkflowExecution(execution: AdmittedWorkflowExecution): Promise<unknown> {
 	if (execution.completion) return execution.completion;
-	const { runId, lifecycle, handler, startWorkflowAdmission } = execution;
+	const { runId, lifecycle, workflow, startWorkflowAdmission } = execution;
 	let didRun = false;
 	const run = async (): Promise<unknown> => {
 		didRun = true;
-		return await withWorkflowRunLifecycle(lifecycle, async () => {
-			return await handler(lifecycle.ctx);
-		});
+		return await withWorkflowRunLifecycle(lifecycle, () =>
+			executeCreatedWorkflow(workflow, lifecycle.ctx, lifecycle.input),
+		);
 	};
 	let scheduled: Promise<unknown>;
 	try {
@@ -404,7 +412,7 @@ export async function failRecoveredRun(opts: FailRecoveredRunOptions): Promise<v
 	await opts.eventStreamStore.createStream(runStreamPath(opts.runId));
 	const lifecycle: WorkflowRunLifecycle = {
 		...opts,
-		payload,
+		input: payload,
 		ctx: opts.createContext(opts.id, opts.runId, payload, opts.request, initialEventIndex),
 		startedAt,
 		startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : Date.now(),
@@ -531,7 +539,7 @@ export async function invokeWorkflowAttached(
 		workflowName: opts.workflowName,
 		id: opts.id,
 		runId: opts.runId,
-		payload: opts.payload,
+		input: opts.input,
 		request: opts.request,
 		createContext: opts.createContext,
 		runStore: opts.runStore,
@@ -542,12 +550,26 @@ export async function invokeWorkflowAttached(
 		ctx.setEventCallback(opts.onEvent);
 	}
 	try {
-		const result = await withWorkflowRunLifecycle(lifecycle, async () => {
-			return await opts.handler(ctx);
-		});
+		const result = await withWorkflowRunLifecycle(lifecycle, () =>
+			executeCreatedWorkflow(opts.workflow, ctx, opts.input),
+		);
 		return { runId: opts.runId, result };
 	} finally {
 		ctx.setEventCallback(undefined);
+	}
+}
+
+async function executeCreatedWorkflow(
+	workflow: CreatedWorkflow,
+	ctx: FlueContextInternal,
+	input: unknown,
+): Promise<unknown> {
+	const parsedInput = parseActionInput(workflow.action, input);
+	const harness = await ctx.initializeRootHarness(workflow.agent);
+	try {
+		return await runActionWithParsedInput(workflow.action, { harness, log: ctx.log }, parsedInput);
+	} finally {
+		await harness.close();
 	}
 }
 
@@ -557,7 +579,7 @@ interface WorkflowRunLifecycleOptions {
 	workflowName: string;
 	id: string;
 	runId: string;
-	payload: unknown;
+	input: unknown;
 	request: Request;
 	createContext: CreateContextFn;
 	runStore?: RunStore;
@@ -576,7 +598,7 @@ async function createWorkflowRunLifecycle(
 ): Promise<WorkflowRunLifecycle> {
 	const startedAtMs = Date.now();
 	const startedAt = new Date(startedAtMs).toISOString();
-	const ctx = options.createContext(options.id, options.runId, options.payload, options.request);
+	const ctx = options.createContext(options.id, options.runId, options.input, options.request);
 	const runStore = options.runStore;
 	const workflowName = options.workflowName;
 	try {
@@ -586,7 +608,7 @@ async function createWorkflowRunLifecycle(
 					runId: options.runId,
 					workflowName,
 					startedAt,
-					payload: options.payload,
+					payload: options.input,
 				}),
 			);
 	} catch (error) {
@@ -641,7 +663,7 @@ function emitRunStart(lifecycle: WorkflowRunLifecycle): void {
 		runId: lifecycle.runId,
 		workflowName: lifecycle.workflowName,
 		startedAt: lifecycle.startedAt,
-		payload: lifecycle.payload,
+		payload: lifecycle.input,
 	});
 }
 

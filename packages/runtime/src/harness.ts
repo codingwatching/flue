@@ -55,6 +55,7 @@ export class Harness implements FlueHarness {
 	private pendingSessionOperations = new Map<string, Promise<void>>();
 	private activeShellCalls = new Set<CallHandle<ShellResult>>();
 	private scopeAbortController = new AbortController();
+	private closePromise: Promise<void> | undefined;
 
 	constructor(
 		private instanceId: string,
@@ -301,18 +302,22 @@ export class Harness implements FlueHarness {
 		return harness;
 	}
 
-	async close(): Promise<void> {
+	close(): Promise<void> {
+		if (this.closePromise) return this.closePromise;
 		this.scopeAbortController.abort();
 		for (const call of this.activeShellCalls) call.abort();
 		for (const session of this.openSessions.values()) session.abort();
-		const pending = [
-			...this.pendingSessionOperations.values(),
-			...this.activeShellCalls,
-		];
-		await Promise.allSettled(pending);
-		this.activeShellCalls.clear();
-		for (const session of this.openSessions.values()) session.close();
-		this.openSessions.clear();
+		this.closePromise = (async () => {
+			await Promise.allSettled([
+				...this.pendingSessionOperations.values(),
+				...this.activeShellCalls,
+			]);
+			this.activeShellCalls.clear();
+			const sessions = [...this.openSessions.values()];
+			await Promise.allSettled(sessions.map((session) => session.close()));
+			this.openSessions.clear();
+		})();
+		return this.closePromise;
 	}
 
 	private emit(event: FlueEventInput): void {

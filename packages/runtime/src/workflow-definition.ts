@@ -1,5 +1,6 @@
 import type * as v from 'valibot';
 import {
+	defineAction,
 	isActionDefinition,
 	type ActionContext,
 	type ActionDefinition,
@@ -14,28 +15,21 @@ type InlineRunResult<S extends v.GenericSchema | undefined> = S extends v.Generi
 	? v.InferInput<S>
 	: JsonValue | undefined;
 
-export interface ExtractedWorkflow<TAction extends ActionDefinition = ActionDefinition> {
+export interface CreatedWorkflow<TAction extends ActionDefinition = ActionDefinition> {
 	readonly __flueCreatedWorkflow: true;
 	readonly agent: CreatedAgent;
 	readonly action: TAction;
-	readonly input?: never;
-	readonly output?: never;
-	readonly run?: never;
 }
 
-export interface InlineWorkflow<
+export type ExtractedWorkflow<TAction extends ActionDefinition = ActionDefinition> =
+	CreatedWorkflow<TAction>;
+
+export type InlineWorkflow<
 	TInput extends ActionInputSchema | undefined = ActionInputSchema | undefined,
 	TOutput extends v.GenericSchema | undefined = v.GenericSchema | undefined,
-> {
-	readonly __flueCreatedWorkflow: true;
-	readonly agent: CreatedAgent;
-	readonly input: TInput;
-	readonly output: TOutput;
-	run(context: ActionContext<TInput>): InlineRunResult<TOutput> | Promise<InlineRunResult<TOutput>>;
-	readonly action?: never;
-}
+> = CreatedWorkflow<ActionDefinition<TInput, TOutput>>;
 
-export type CreatedWorkflow = ExtractedWorkflow | InlineWorkflow;
+const createdWorkflows = new WeakSet<object>();
 
 type ExtractedWorkflowOptions<TAction extends ActionDefinition> = {
 	agent: CreatedAgent;
@@ -84,11 +78,7 @@ export function createWorkflow(
 		if (Object.hasOwn(options, 'input') || Object.hasOwn(options, 'output')) {
 			throw new Error('[flue] createWorkflow({ action }) does not accept input or output.');
 		}
-		return Object.freeze({
-			__flueCreatedWorkflow: true,
-			agent: options.agent,
-			action: options.action,
-		});
+		return createCreatedWorkflow(options.agent, options.action);
 	}
 	if (typeof options.run !== 'function') {
 		throw new Error('[flue] createWorkflow({ run }) must be a function.');
@@ -101,12 +91,30 @@ export function createWorkflow(
 	if (options.output !== undefined && !isValibotSchema(options.output)) {
 		throw new Error('[flue] createWorkflow({ output }) must be a Valibot schema.');
 	}
-	return Object.freeze({
-		__flueCreatedWorkflow: true,
-		agent: options.agent,
+	const action = defineAction({
+		name: 'workflow',
+		description: 'Workflow-private action.',
 		input: options.input,
 		output: options.output,
 		run: options.run,
+	} as never);
+	return createCreatedWorkflow(options.agent, action);
+}
+
+function createCreatedWorkflow<TAction extends ActionDefinition>(
+	agent: CreatedAgent,
+	action: TAction,
+): CreatedWorkflow<TAction> {
+	const workflow = Object.freeze({
+		__flueCreatedWorkflow: true as const,
+		agent,
+		action,
 	});
+	createdWorkflows.add(workflow);
+	return workflow;
+}
+
+export function isCreatedWorkflow(value: unknown): value is CreatedWorkflow {
+	return Boolean(value && typeof value === 'object' && createdWorkflows.has(value));
 }
 
