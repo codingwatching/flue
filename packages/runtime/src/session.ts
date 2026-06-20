@@ -235,7 +235,7 @@ export interface CreateTaskSessionOptions {
 
 export type CreateTaskSession = (options: CreateTaskSessionOptions) => Promise<Session>;
 
-export interface CreateActionHarnessOptions {
+interface CreateActionHarnessOptions {
 	invocationId: string;
 	depth: number;
 	signal?: AbortSignal;

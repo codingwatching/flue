@@ -11,6 +11,9 @@ importers:
       just-bash:
         specifier: ^3.0.1
         version: 3.0.1
+      valibot:
+        specifier: ^1.1.0
+        version: 1.4.0(typescript@6.0.3)
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.2.0

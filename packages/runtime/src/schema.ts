@@ -2,7 +2,7 @@ import { toJsonSchema } from '@valibot/to-json-schema';
 import * as v from 'valibot';
 import type { ValidationIssue } from './errors.ts';
 
-export type ReadonlyJsonValue =
+type ReadonlyJsonValue =
 	| null
 	| boolean
 	| number
@@ -78,7 +78,7 @@ function assertValibotSchema(value: unknown): asserts value is v.GenericSchema {
 	if (!isValibotSchema(value)) throw new TypeError('[flue] Expected a Valibot schema.');
 }
 
-export function normalizeValibotIssue(issue: v.BaseIssue<unknown>): ValidationIssue {
+function normalizeValibotIssue(issue: v.BaseIssue<unknown>): ValidationIssue {
 	const path = issue.path
 		?.map((segment) => segment.key)
 		.filter((key): key is PropertyKey => key !== undefined && key !== null);

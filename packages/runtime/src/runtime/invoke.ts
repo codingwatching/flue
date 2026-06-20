@@ -20,7 +20,7 @@ export type WorkflowInvokeRequest<TWorkflow extends WorkflowDefinition> =
 			: { readonly input?: never }
 		: never;
 
-export interface WorkflowAdmissionInput {
+interface WorkflowAdmissionInput {
 	readonly workflowName: string;
 	readonly input: unknown;
 }
