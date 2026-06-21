@@ -74,6 +74,7 @@ export class NodePlugin implements BuildPlugin {
 ${packagedSkillsImport}
 import { serve } from '@hono/node-server';
 import { sqlite } from '@flue/runtime/node';
+import createDebug from 'debug';
 import {
   Bash,
   InMemoryFs,
@@ -89,6 +90,7 @@ import {
   invokeWorkflowAttached,
   invokeDirectAttached,
   generateWorkflowRunId,
+  installDevLifecycleLogger,
 } from '@flue/runtime/internal';
 ${agentImports}
 ${workflowImports}
@@ -99,6 +101,7 @@ ${userDbImport}
 // ─── Config ─────────────────────────────────────────────────────────────────
 
 const packagedSkills = ${packagedSkillsValue};
+const debugStartup = createDebug('flue:server:startup');
 
 ${builtModuleNormalizationSource}
 const agentModules = {
@@ -114,6 +117,7 @@ const normalized = normalizeBuiltModules(agentModules, workflowModules, channelM
 const { agents, workflows, channelHandlers } = normalized;
 
 const isLocalMode = process.env.FLUE_MODE === 'local';
+const devLifecycle = isLocalMode && process.env.FLUE_INTERNAL_DEV_LOGS === '1' ? installDevLifecycleLogger() : undefined;
 const localCliTarget = process.env.FLUE_CLI_TARGET;
 const localCliName = process.env.FLUE_CLI_NAME;
 const localCliId = process.env.FLUE_CLI_ID;
@@ -185,6 +189,7 @@ const agentCoordinator = createNodeAgentCoordinator({
   agents,
   createContext: createAgentContextForRequest,
   eventStreamStore,
+  onInteractionStart: devLifecycle?.onAgentInteractionStart,
 });
 const dispatchQueue = createNodeDispatchQueue(agentCoordinator);
 
@@ -419,17 +424,18 @@ if (isLocalCliMode && hasIpcChannel) {
     fetch: (request, env) => flueApp.fetch(request, env),
     port,
     serverOptions: { requestTimeout: 0 },
+  }, () => {
+    console.log('[flue] Server listening on http://localhost:' + port);
+    if (isLocalMode) {
+      process.send?.('flue:dev-ready');
+      debugStartup('mode=local');
+    }
+    debugStartup('agents=%s', ${JSON.stringify(agents.map((a) => a.name).join(', '))});
   });
-  console.log('[flue] Server listening on http://localhost:' + port);
-  if (isLocalMode) {
-    console.log('[flue] Mode: local');
-  }
-  console.log('[flue] Agents: ' + ${JSON.stringify(agents.map((a) => a.name).join(', '))});
   let shuttingDown = false;
   async function stop(signal, exitCode) {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.error('[flue] Received ' + signal + ', shutting down...');
     // Backstop: force-exit if any shutdown step stalls past the coordinator's
     // own drain timeout. unref() so the timer never keeps the process alive.
     setTimeout(() => {
@@ -446,7 +452,6 @@ if (isLocalCliMode && hasIpcChannel) {
       server.close(resolve);
       server.closeAllConnections();
     });
-    console.error('[flue] Stopped.');
     process.exit(exitCode);
   }
   process.on('SIGINT', () => { void stop('SIGINT', 130); });

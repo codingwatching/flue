@@ -2,7 +2,6 @@ import * as fs from 'node:fs';
 import { builtinModules, createRequire } from 'node:module';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cloudflare } from '@cloudflare/vite-plugin';
 import { packageUpSync } from 'package-up';
 import { CloudflarePlugin } from './build-plugin-cloudflare.ts';
 import { NodePlugin } from './build-plugin-node.ts';
@@ -197,8 +196,13 @@ async function buildApplication(options: BuildOptions): Promise<BuildResult> {
 			return { changed: generatedChanged };
 		}
 		const generatedConfigPath = cloudflareViteConfigPath(root);
-		const { createBuilder } = await import('vite');
-		const viteConfig = createCloudflareViteConfig(root, generatedConfigPath, [entryPath]);
+		const [{ cloudflare }, { createBuilder }] = await Promise.all([
+			import('@cloudflare/vite-plugin'),
+			import('vite'),
+		]);
+		const viteConfig = createCloudflareViteConfig(cloudflare, root, generatedConfigPath, [
+			entryPath,
+		]);
 		await withTemporaryProcessEnv({ NODE_ENV: 'production' }, async () => {
 			const builder = await createBuilder({
 				...viteConfig,
@@ -331,11 +335,12 @@ function getUserExternals(root: string): string[] {
 
 	try {
 		const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+		const bundledGeneratedEntryDependencies = new Set(['@flue/runtime', 'debug']);
 		const deps = Object.keys({
 			...pkg.dependencies,
 			...pkg.devDependencies,
 			...pkg.peerDependencies,
-		}).filter((name) => name !== '@flue/runtime');
+		}).filter((name) => !bundledGeneratedEntryDependencies.has(name));
 		return deps.flatMap((name) => [name, `${name}/*`]);
 	} catch {
 		return [];
@@ -359,6 +364,7 @@ function createSharedViteConfig(root: string, bootstrapEntries: readonly string[
 }
 
 export function createCloudflareViteConfig(
+	cloudflare: typeof import('@cloudflare/vite-plugin').cloudflare,
 	root: string,
 	configPath: string,
 	bootstrapEntries: readonly string[] = [],

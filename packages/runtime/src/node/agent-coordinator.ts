@@ -13,6 +13,7 @@ import {
 	reconcileInterruptedSubmission,
 	submissionSyntheticRequest,
 } from '../runtime/agent-submissions.ts';
+import type { AgentInteractionStart } from '../runtime/dev-lifecycle-logger.ts';
 import type { DispatchInput, DispatchQueue } from '../runtime/dispatch-queue.ts';
 import { agentStreamPath } from '../runtime/event-stream-store.ts';
 import type { CreateAgentContextFn } from '../runtime/handle-agent.ts';
@@ -94,8 +95,9 @@ export function createNodeAgentCoordinator(options: {
 	agents: ReadonlyArray<{ name: string; definition: AgentDefinition }>;
 	createContext: CreateAgentContextFn;
 	eventStreamStore: import('../runtime/event-stream-store.ts').EventStreamStore;
+	onInteractionStart?: (interaction: AgentInteractionStart) => void;
 }): NodeAgentCoordinator {
-	const { submissions, sessions, agents, createContext, eventStreamStore } = options;
+	const { submissions, sessions, agents, createContext, eventStreamStore, onInteractionStart } = options;
 	const observers = createAgentSubmissionObserverRegistry();
 
 	// ── Lease ownership ──────────────────────────────────────────────────
@@ -205,6 +207,7 @@ export function createNodeAgentCoordinator(options: {
 				resolveAgent,
 				createContext: makeSubmissionContext(claimed.input),
 				observers,
+				onInteractionStart,
 				signal: controller.signal,
 				isShutdownAbort: (error) =>
 					stopping && error instanceof DOMException && error.name === 'AbortError',

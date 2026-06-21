@@ -15,6 +15,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import createDebug from 'debug';
 import {
 	build,
 	cloudflareViteConfigPath,
@@ -24,15 +25,21 @@ import {
 	discoverWorkflows,
 	viteInputDir,
 } from './build.ts';
+import pc from 'picocolors';
 import { createEnvLoader, type EnvLoader, selectEnvFile } from './env.ts';
-import { blue, brandRows, dim, error, note, red, section, success } from './terminal.ts';
+import { devLog, devServerBanner, error, note } from './terminal.ts';
 import type { BuildOptions } from './types.ts';
+
+const debugDev = createDebug('flue:dev');
+const debugWatch = createDebug('flue:dev:watch');
+const debugServer = createDebug('flue:dev:server');
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface DevOptions {
 	root: string;
 	sourceRoot: string;
+	version: string;
 	/**
 	 * Where the build artifacts are written. Defaults to `<root>/dist`.
 	 * See {@link BuildOptions.output} for details.
@@ -91,10 +98,12 @@ interface DevReloader {
  * — the user is editing code, after all, and we want to recover when they fix it.
  */
 export async function dev(options: DevOptions): Promise<void> {
+	const startedAt = Date.now();
 	const root = path.resolve(options.root);
 	const sourceRoot = path.resolve(options.sourceRoot);
 	const output = path.resolve(options.output ?? path.join(root, 'dist'));
 	const port = options.port ?? DEFAULT_DEV_PORT;
+	debugDev('starting target=%s root=%s source=%s output=%s port=%d', options.target, root, sourceRoot, output, port);
 
 	const envFile = options.envLoader?.file ?? selectEnvFile(options.envFile, root);
 	const envLoader = options.envLoader ?? createEnvLoader(envFile);
@@ -128,36 +137,19 @@ export async function dev(options: DevOptions): Promise<void> {
 			: new CloudflareReloader({ root, sourceRoot, port });
 
 	await reloader.start();
+	debugDev('ready target=%s url=%s duration=%dms', options.target, reloader.url, Date.now() - startedAt);
 
-	brandRows('flue dev', [
-		['target', options.target],
-		['server', reloader.url],
-		['config', options.configFile ? displayPath(root, options.configFile) : undefined],
-		['env', fs.existsSync(envFile) ? displayPath(root, envFile) : undefined],
-		['source', path.relative(root, sourceRoot) || '.'],
-		['output', path.relative(root, output) || '.'],
-	]);
-	section(
-		'agents',
-		discoverAgents(sourceRoot).map((agent) => agent.name),
-	);
-	section(
-		'workflows',
-		discoverWorkflows(sourceRoot).map((workflow) => workflow.name),
-	);
-	section(
-		'channels',
-		discoverChannels(sourceRoot).map((channel) => channel.name),
-	);
-	console.error('');
 	if (reloader.url) {
-		const exampleAgent = pickExampleAgentName(sourceRoot);
-		if (exampleAgent) {
-			note(`connect with: flue connect ${exampleAgent} local`);
-		}
+		devServerBanner(
+			options.version,
+			Date.now() - startedAt,
+			reloader.url,
+			discoverAgents(sourceRoot).map((agent) => agent.name),
+			discoverWorkflows(sourceRoot).map((workflow) => workflow.name),
+			discoverChannels(sourceRoot).map((channel) => channel.name),
+		);
 	}
-	note('watching for changes; Ctrl+C to stop');
-	console.error('');
+	devLog(pc.dim('watching for file changes...'));
 	options.onReady?.();
 
 	// ─── Watch loop ──────────────────────────────────────────────────────────
@@ -184,7 +176,7 @@ export async function dev(options: DevOptions): Promise<void> {
 					return;
 				}
 			}
-			console.error(`${dim('changed')} ${relPath}`);
+			devLog(`${pc.dim('changed')} ${relPath}`);
 			rebuilder.schedule(isEnvFile);
 		},
 	});
@@ -195,14 +187,12 @@ export async function dev(options: DevOptions): Promise<void> {
 	const shutdown = async (signal: string, exitCode: number) => {
 		if (shuttingDown) return;
 		shuttingDown = true;
-		console.error(`\n${dim(signal)} shutting down`);
 		watcher.close();
 		try {
 			await reloader.stop();
 		} catch (err) {
 			error(`Shutdown failed: ${err instanceof Error ? err.message : String(err)}`);
 		}
-		success('stopped');
 		process.exit(exitCode);
 	};
 
@@ -223,11 +213,6 @@ export async function dev(options: DevOptions): Promise<void> {
 
 	// Block forever until a signal handler exits the process.
 	await new Promise<void>(() => {});
-}
-
-function displayPath(root: string, filePath: string): string {
-	const relative = path.relative(root, filePath);
-	return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : filePath;
 }
 
 // ─── Rebuilder ──────────────────────────────────────────────────────────────
@@ -260,12 +245,14 @@ function createRebuilder(
 	const runOnce = async (force: boolean) => {
 		running = true;
 		const start = Date.now();
-		console.error(`${dim('rebuild')} started`);
+		debugWatch('rebuild started force=%s', force);
 		try {
 			const { changed } = await rebuild();
+			debugWatch('build completed changed=%s force=%s', changed, force);
 			await reloader.reload(changed || force);
-			success(`rebuilt in ${Date.now() - start}ms`);
-			console.error('');
+			const duration = Date.now() - start;
+			debugWatch('rebuild completed duration=%dms', duration);
+			devLog(`${pc.dim('rebuilt in')} ${duration}ms`);
 		} catch (err) {
 			// Don't exit the dev loop on a rebuild error — the user is editing
 			// code, they'll fix it and trigger another rebuild.
@@ -276,6 +263,7 @@ function createRebuilder(
 			running = false;
 			if (queued) {
 				const nextForce = queuedForce;
+				debugWatch('running queued rebuild force=%s', nextForce);
 				queued = false;
 				queuedForce = false;
 				void runOnce(nextForce);
@@ -285,6 +273,7 @@ function createRebuilder(
 
 	return {
 		schedule(forceReload = false) {
+			debugWatch('rebuild scheduled force=%s running=%s queued=%s', forceReload, running, queued);
 			if (forceReload) pendingForce = true;
 			if (debounceTimer) clearTimeout(debounceTimer);
 			debounceTimer = setTimeout(() => {
@@ -292,6 +281,7 @@ function createRebuilder(
 				const force = pendingForce;
 				pendingForce = false;
 				if (running) {
+					debugWatch('rebuild queued force=%s', force);
 					queued = true;
 					if (force) queuedForce = true;
 				} else {
@@ -379,10 +369,14 @@ function createWatcher(options: WatcherOptions): WatcherHandle {
 	};
 
 	try {
-		const w = fs.watch(root, { recursive: true }, (_event, filename) => {
+		const w = fs.watch(root, { recursive: true }, (event, filename) => {
 			if (!filename) return;
 			const rel = filename.toString();
-			if (isIgnoredPath(rel)) return;
+			if (isIgnoredPath(rel)) {
+				debugWatch('ignored event=%s path=%s', event, rel);
+				return;
+			}
+			debugWatch('changed event=%s path=%s', event, rel);
 			onChange(rel);
 		});
 		watchers.push(w);
@@ -469,35 +463,73 @@ class NodeReloader implements DevReloader {
 	// ── Internals ──
 
 	private async spawnAndWait(): Promise<void> {
+		debugServer('spawning node server path=%s port=%d', this.serverPath, this.port);
 		const child = spawn(process.execPath, [this.serverPath], {
-			stdio: ['ignore', 'pipe', 'pipe'],
+			stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
 			cwd: this.root,
 			env: {
 				...process.env,
 				PORT: String(this.port),
 				FLUE_MODE: 'local',
+				FLUE_INTERNAL_DEV_LOGS: '1',
 			},
 		});
 		this.child = child;
+		debugServer('spawned node server pid=%d', child.pid);
 
-		const pipe = (data: Buffer) => {
-			const text = data.toString().trimEnd();
-			for (const line of text.split('\n')) {
-				if (!line.trim()) continue;
-				if (
-					line.includes('[flue] Server listening') ||
-					line.includes('[flue] Agents:') ||
-					line.includes('[flue] Mode: local')
-				) {
-					continue;
-				}
-				console.error(formatChildLogLine(line));
+		const renderLine = (line: string) => {
+			if (!line.trim()) return;
+			if (
+				line.includes('[flue] Server listening') ||
+				line.includes('[flue] Agents:') ||
+				line.includes('[flue] Mode: local')
+			) {
+				return;
 			}
+			const lifecycle = line.match(/^(\[(?:agent|workflow)\]\s+)(\S+@\S+)(.*)$/);
+			devLog(lifecycle ? `${lifecycle[1]}${pc.blue(lifecycle[2] ?? '')}${lifecycle[3]}` : line);
 		};
-		child.stdout?.on('data', pipe);
-		child.stderr?.on('data', pipe);
+		const pipe = (suppressSqliteWarning: boolean) => {
+			let buffered = '';
+			let suppressWarningHint = false;
+			const write = (line: string) => {
+				if (
+					suppressSqliteWarning &&
+					line.includes('ExperimentalWarning: SQLite is an experimental feature and might change at any time')
+				) {
+					suppressWarningHint = true;
+					return;
+				}
+				if (suppressWarningHint) {
+					suppressWarningHint = false;
+					if (line.trim() === '(Use `node --trace-warnings ...` to show where the warning was created)') {
+						return;
+					}
+				}
+				renderLine(line);
+			};
+			return {
+				onData(data: Buffer) {
+					buffered += data.toString();
+					const lines = buffered.split('\n');
+					buffered = lines.pop() ?? '';
+					for (const line of lines) write(line);
+				},
+				onEnd() {
+					if (buffered) write(buffered);
+				},
+			};
+		};
+		const stdout = pipe(false);
+		const stderr = pipe(true);
+		child.stdout?.on('data', stdout.onData);
+		child.stdout?.on('end', stdout.onEnd);
+		child.stderr?.on('data', stderr.onData);
+		child.stderr?.on('end', stderr.onEnd);
 
+		const ready = waitForNodeReady(child);
 		child.on('exit', (code, signal) => {
+			debugServer('node server exited pid=%d code=%s signal=%s', child.pid, code, signal);
 			if (this.child === child) {
 				this.child = null;
 				if (code !== 0 && code !== null) {
@@ -506,19 +538,27 @@ class NodeReloader implements DevReloader {
 			}
 		});
 
-		// No readiness probe: user apps own their routes, including health checks.
+		try {
+			await ready;
+			debugServer('node server ready pid=%d port=%d', child.pid, this.port);
+		} catch (error) {
+			await this.killChild();
+			throw error;
+		}
 	}
 
 	private async killChild(): Promise<void> {
 		const child = this.child;
 		this.child = null;
 		if (!child || child.exitCode !== null || child.signalCode !== null) return;
+		debugServer('stopping node server pid=%d', child.pid);
 		this.draining = child;
 		await new Promise<void>((resolve) => {
 			let timer: NodeJS.Timeout | undefined;
 			let resolved = false;
 			const done = () => {
 				if (!resolved) {
+					debugServer('node server stopped pid=%d', child.pid);
 					resolved = true;
 					clearTimeout(timer);
 					if (this.draining === child) this.draining = null;
@@ -539,6 +579,7 @@ class NodeReloader implements DevReloader {
 			// tracked via the 'exit' event; we resolve only once the child has
 			// actually exited and released the port.
 			timer = setTimeout(() => {
+				debugServer('force stopping node server pid=%d', child.pid);
 				try {
 					child.kill('SIGKILL');
 				} catch {
@@ -547,18 +588,6 @@ class NodeReloader implements DevReloader {
 			}, 1_000);
 		});
 	}
-}
-
-function formatChildLogLine(line: string): string {
-	const flueStructured = line.match(/^\[flue\]\s+\[([^\]]+)\]\s*(.*)$/);
-	if (flueStructured) {
-		const code = flueStructured[1]?.replace(/_/g, ' ') ?? 'error';
-		const message = flueStructured[2] ?? '';
-		return `${red('flue')}: ${red(code)}: ${message}`;
-	}
-	const fluePlain = line.match(/^\[flue\]\s+(.*)$/);
-	if (fluePlain) return `${blue('flue')}: ${fluePlain[1] ?? ''}`;
-	return line;
 }
 
 // ─── Cloudflare reloader ────────────────────────────────────────────────────
@@ -582,9 +611,12 @@ class CloudflareReloader implements DevReloader {
 	}
 
 	async start(): Promise<void> {
-		const { createServer } = await import('vite');
+		const [{ cloudflare }, { createServer }] = await Promise.all([
+			import('@cloudflare/vite-plugin'),
+			import('vite'),
+		]);
 		this.server = await createServer({
-			...createCloudflareViteConfig(this.root, this.configPath, [this.entryPath]),
+			...createCloudflareViteConfig(cloudflare, this.root, this.configPath, [this.entryPath]),
 			logLevel: 'info',
 			server: { host: '127.0.0.1', port: this.port, strictPort: true },
 		});
@@ -616,6 +648,35 @@ class CloudflareReloader implements DevReloader {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+async function waitForNodeReady(child: ChildProcess): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			cleanup();
+			reject(new Error('Timed out waiting for Node server to become ready.'));
+		}, 10_000);
+		const cleanup = () => {
+			clearTimeout(timer);
+			child.off('message', onMessage);
+			child.off('exit', onExit);
+		};
+		const onMessage = (message: unknown) => {
+			if (message !== 'flue:dev-ready') return;
+			cleanup();
+			resolve();
+		};
+		const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+			cleanup();
+			reject(
+				new Error(
+					`Node server exited before becoming ready (code=${code ?? 'none'}, signal=${signal ?? 'none'}).`,
+				),
+			);
+		};
+		child.on('message', onMessage);
+		child.once('exit', onExit);
+	});
+}
+
 function isSourceStructurePath(root: string, sourceRoot: string, relPath: string): boolean {
 	const prefix = path.relative(root, sourceRoot).replace(/\\/g, '/');
 	const sourceRelative = prefix
@@ -631,8 +692,4 @@ function isSourceStructurePath(root: string, sourceRoot: string, relPath: string
 	)
 		return true;
 	return /^(?:app|cloudflare)\.(?:ts|mts|js|mjs)$/.test(sourceRelative);
-}
-
-function pickExampleAgentName(sourceRoot: string): string | null {
-	return discoverAgents(sourceRoot)[0]?.name ?? null;
 }

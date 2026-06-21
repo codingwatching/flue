@@ -592,6 +592,13 @@ export interface ProcessSubmissionOptions {
 	createContext: (dispatchId: string | undefined) => FlueContextInternal;
 	/** Observer registry for direct submission events and settlement. */
 	observers: Pick<AgentSubmissionObserverRegistry, 'publish' | 'complete' | 'fail'>;
+	onInteractionStart?: (interaction: {
+		agentName: string;
+		instanceId: string;
+		kind: AgentSubmission['kind'];
+		submissionId: string;
+		dispatchId?: string;
+	}) => void;
 	/**
 	 * Optional abort signal. When aborted, the session finishes the current
 	 * turn and throws AbortError. Used by the Node coordinator for graceful
@@ -633,6 +640,19 @@ export async function processSubmission(opts: ProcessSubmissionOptions): Promise
 	};
 	const persisted = await submissions.getSubmission(submission.submissionId);
 	if (persisted?.status !== 'running' || persisted.attemptId !== attempt.attemptId) return;
+	if (submission.attemptCount === 1 && opts.onInteractionStart) {
+		try {
+			opts.onInteractionStart({
+				agentName: input.agent,
+				instanceId: input.id,
+				kind: submission.kind,
+				submissionId: submission.submissionId,
+				dispatchId: agentSubmissionDispatchId(input),
+			});
+		} catch (error) {
+			console.error('[flue:submission-observer] interaction start callback failed:', error);
+		}
+	}
 
 	const agent = opts.resolveAgent(input.agent);
 	const ctx = opts.createContext(agentSubmissionDispatchId(input));

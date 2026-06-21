@@ -1,35 +1,45 @@
-const BLUE = '\x1b[34m';
-const BOLD = '\x1b[1m';
-const DIM = '\x1b[2m';
-const RED = '\x1b[31m';
-const RESET = '\x1b[0m';
+import pc from 'picocolors';
 
-function useColor(): boolean {
-	return Boolean(process.stderr.isTTY) && process.env.NO_COLOR === undefined;
+const timeFormat = new Intl.DateTimeFormat([], {
+	hour: '2-digit',
+	minute: '2-digit',
+	second: '2-digit',
+	hour12: false,
+});
+
+export function devLog(message: string): void {
+	console.error(`${pc.dim(timeFormat.format(new Date()))} ${message}`);
 }
 
-function paint(code: string, text: string): string {
-	return useColor() ? `${code}${text}${RESET}` : text;
+export function devServerBanner(
+	version: string,
+	readyMs: number,
+	localUrl: string,
+	agents: readonly string[],
+	workflows: readonly string[],
+	channels: readonly string[],
+): void {
+	console.error('');
+	console.error(`  ${pc.bold(pc.blue(`flue v${version}`))} ${pc.dim(`ready in`)} ${pc.bold(`${readyMs} ms`)}`);
+	console.error(`  ${pc.blue(`└─ ${localUrl}`)}`);
+	console.error('');
+	if (agents.length > 0) console.error(`  ${pc.bold('Agents:'.padEnd(13))}${summarizeNames(agents)}`);
+	if (workflows.length > 0)
+		console.error(`  ${pc.bold('Workflows:'.padEnd(13))}${summarizeNames(workflows)}`);
+	if (channels.length > 0)
+		console.error(`  ${pc.bold('Channels:'.padEnd(13))}${summarizeNames(channels)}`);
+	console.error('');
 }
 
-export function blue(text: string): string {
-	return paint(BLUE, text);
-}
-
-function bold(text: string): string {
-	return paint(BOLD, text);
-}
-
-export function dim(text: string): string {
-	return paint(DIM, text);
-}
-
-export function red(text: string): string {
-	return paint(RED, text);
+function summarizeNames(names: readonly string[]): string {
+	const visible = names.slice(0, 2).join(', ');
+	const remaining = names.length - 2;
+	if (remaining <= 0) return visible;
+	return `${visible}, ${pc.dim(`+${remaining} ${remaining === 1 ? 'other' : 'others'}`)}`;
 }
 
 export function brand(lines: [string, string, string]): string {
-	const mark = [blue(' ▗ '), blue(' ▚ '), blue(' ▘ ')];
+	const mark = [pc.blue(' ▗ '), pc.blue(' ▚ '), pc.blue(' ▘ ')];
 	return lines.map((line, index) => `${mark[index]} ${line}`).join('\n');
 }
 
@@ -37,34 +47,34 @@ export function brandRows(title: string, rows: readonly [string, string | undefi
 	const visible = rows.filter(
 		(row): row is [string, string] => row[1] !== undefined && row[1] !== '',
 	);
-	const mark = [blue(' ▗ '), blue(' ▚ '), blue(' ▘ ')];
-	console.error(`${mark[0]} ${bold(title)}`);
+	const mark = [pc.blue(' ▗ '), pc.blue(' ▚ '), pc.blue(' ▘ ')];
+	console.error(`${mark[0]} ${pc.bold(title)}`);
 	visible.forEach(([label, value], index) => {
 		const prefix = mark[index + 1] ?? '   ';
-		console.error(`${prefix} ${dim(label.padEnd(10))}${value}`);
+		console.error(`${prefix} ${pc.dim(label.padEnd(10))}${value}`);
 	});
 }
 
 export function row(label: string, value: string | undefined): void {
 	if (!value) return;
-	console.error(`    ${dim(label.padEnd(10))}${value}`);
+	console.error(`    ${pc.dim(label.padEnd(10))}${value}`);
 }
 
 export function section(title: string, values: readonly string[]): void {
 	if (values.length === 0) return;
 	console.error('');
-	console.error(`    ${bold(title)}`);
+	console.error(`    ${pc.bold(title)}`);
 	for (const value of values) console.error(`      ${value}`);
 }
 
 export function note(message: string): void {
-	console.error(`    ${dim(message)}`);
+	console.error(`    ${pc.dim(message)}`);
 }
 
 export function error(message: string): void {
-	console.error(`${bold('Error')}: ${message}`);
+	console.error(`${pc.bold('Error')}: ${message}`);
 }
 
 export function success(message: string): void {
-	console.error(`${blue('done')} ${message}`);
+	console.error(`${pc.blue('done')} ${message}`);
 }

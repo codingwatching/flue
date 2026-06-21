@@ -24,6 +24,24 @@ test('restarts after discovered config changes and recovers after invalid config
 		path.join(root, 'workflows', 'daily.report.mjs'),
 		`import { defineAgent, defineWorkflow } from '@flue/runtime';\nexport default defineWorkflow({ agent: defineAgent(() => ({ model: false })), async run() { return { ok: true }; } });\n`,
 	);
+	fs.writeFileSync(
+		path.join(root, 'workflows', 'weekly.mjs'),
+		`import { defineAgent, defineWorkflow } from '@flue/runtime';\nexport default defineWorkflow({ agent: defineAgent(() => ({ model: false })), async run() { return { ok: true }; } });\n`,
+	);
+	fs.mkdirSync(path.join(root, 'agents'));
+	for (const name of ['support', 'researcher', 'reviewer', 'writer', 'planner']) {
+		fs.writeFileSync(
+			path.join(root, 'agents', `${name}.mjs`),
+			`import { defineAgent } from '@flue/runtime';\nexport default defineAgent(() => ({ model: false }));\n`,
+		);
+	}
+	fs.mkdirSync(path.join(root, 'channels'));
+	for (const name of ['slack', 'teams', 'webhook']) {
+		fs.writeFileSync(
+			path.join(root, 'channels', `${name}.mjs`),
+			`export const channel = { routes: [{ method: 'POST', path: '/events', handler: () => new Response() }] };\n`,
+		);
+	}
 	fs.writeFileSync(path.join(root, '.config-helper.mjs'), `export default 'dist-one';\n`);
 	fs.writeFileSync(
 		path.join(root, 'flue.config.mjs'),
@@ -33,8 +51,20 @@ test('restarts after discovered config changes and recovers after invalid config
 	const dev = startDev(root, ['--port', String(port)]);
 	try {
 		await waitForServer(port, dev.logs);
-		await dev.waitForLog('daily.report');
+		await dev.waitForLog(`http://localhost:${port}`);
+		assert.match(dev.logs(), /flue v\S+\s+ready in \d+ ms/);
+		assert.match(dev.logs(), /Agents:\s+planner, researcher, \+3 others/);
+		assert.match(dev.logs(), /Workflows:\s+daily\.report, smoke, \+1 other/);
+		assert.match(dev.logs(), /Channels:\s+slack, teams, \+1 other/);
+		assert.match(dev.logs(), /\d{2}:\d{2}:\d{2} watching for file changes\.\.\./);
+		assert.doesNotMatch(dev.logs(), /flue connect|➜/);
 		assert.equal(fs.existsSync(path.join(root, 'dist-one', 'server.mjs')), true);
+
+		fs.writeFileSync(path.join(root, 'agents', 'support.mjs'), `import { defineAgent } from '@flue/runtime';\nexport default defineAgent(() => ({ model: false }));\n`);
+		await dev.waitForLog('changed agents/support.mjs');
+		await dev.waitForLog('rebuilt in');
+		assert.match(dev.logs(), /\d{2}:\d{2}:\d{2} changed agents\/support\.mjs/);
+		assert.match(dev.logs(), /\d{2}:\d{2}:\d{2} rebuilt in \d+ms/);
 
 		fs.writeFileSync(path.join(root, '.config-helper.mjs'), `export default 'dist-two';\n`);
 		fs.appendFileSync(path.join(root, 'flue.config.mjs'), '\n');
@@ -53,10 +83,47 @@ test('restarts after discovered config changes and recovers after invalid config
 		await waitForServer(port);
 
 		fs.rmSync(path.join(root, 'flue.config.ts'));
-		await dev.waitForLog('config    flue.config.mjs');
+		await dev.waitForLog('flue.config.ts changed; restarting');
+		await dev.waitForLog(`http://localhost:${port}`, 2);
 		await waitForServer(port);
 	} finally {
 		await dev.stop();
+	}
+});
+
+test('prints namespaced diagnostics when DEBUG enables dev logging', async () => {
+	const root = createFixtureRoot();
+	const port = await getAvailablePort();
+	writeWorkflow(root);
+
+	const dev = startDev(root, ['--target', 'node', '--port', String(port)], {
+		DEBUG: 'flue:dev*',
+	});
+	try {
+		await waitForServer(port, dev.logs);
+		await dev.waitForLog('flue:dev:server node server ready');
+		assert.match(dev.logs(), /flue:dev starting target=node/);
+	} finally {
+		await dev.stop();
+	}
+});
+
+test('does not report ready when the requested port is occupied', async () => {
+	const root = createFixtureRoot();
+	const port = await getAvailablePort();
+	writeWorkflow(root);
+	const blocker = createServer();
+	blocker.listen(port);
+	await once(blocker, 'listening');
+
+	const dev = startDev(root, ['--target', 'node', '--port', String(port)]);
+	try {
+		await dev.waitForLog('Dev server failed:');
+		assert.doesNotMatch(dev.logs(), /flue v\S+\s+ready in|Agents:|Workflows:/);
+	} finally {
+		await dev.stop();
+		blocker.close();
+		await once(blocker, 'close');
 	}
 });
 
@@ -106,9 +173,10 @@ function writeWorkflow(root) {
 	);
 }
 
-function startDev(cwd, args) {
+function startDev(cwd, args, env = {}) {
 	const child = spawn(process.execPath, [cli.pathname, 'dev', ...args], {
 		cwd,
+		env: { ...process.env, ...env },
 		stdio: ['ignore', 'pipe', 'pipe'],
 	});
 	let output = '';
@@ -122,9 +190,9 @@ function startDev(cwd, args) {
 		logs() {
 			return output;
 		},
-		waitForLog(text) {
+		waitForLog(text, occurrences = 1) {
 			return waitFor(
-				() => output.includes(text),
+				() => output.split(text).length - 1 >= occurrences,
 				`Timed out waiting for log: ${text}\n\n${output}`,
 			);
 		},

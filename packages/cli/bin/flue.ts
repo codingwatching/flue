@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { type ParseArgsOptionsConfig, parseArgs as parseNodeArgs } from 'node:util';
 import { determineAgent } from '@vercel/detect-agent';
 import MiniSearch from 'minisearch';
+import pc from 'picocolors';
 import { build } from '../src/lib/build.ts';
 import {
 	type FlueConfig,
@@ -21,7 +22,6 @@ import {
 	brand,
 	brandRows,
 	error as cliError,
-	dim,
 	note,
 	row,
 	success,
@@ -546,12 +546,7 @@ function parseArgs(argv: string[]): ParsedArgs {
 	}
 
 	if (command === '--version' || command === '-v') {
-		// Resolved relative to this module: both `bin/` (source) and `dist/`
-		// (compiled) sit one level under the package root.
-		const pkg = JSON.parse(
-			fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
-		) as { version: string };
-		console.log(pkg.version);
+		console.log(readCliVersion());
 		process.exit(0);
 	}
 
@@ -736,7 +731,7 @@ function logEvent(event: any) {
 
 		case 'thinking_start':
 			flushTextBuffer();
-			console.error(dim('thinking'));
+			console.error(pc.dim('thinking'));
 			break;
 
 		case 'thinking_delta': {
@@ -772,7 +767,7 @@ function logEvent(event: any) {
 					toolDetail += `  ${event.args.pattern}`;
 				}
 			}
-			console.error(`${dim('tool')} ${toolDetail}`);
+			console.error(`${pc.dim('tool')} ${toolDetail}`);
 			break;
 		}
 
@@ -787,7 +782,7 @@ function logEvent(event: any) {
 					resultPreview = `  ${text}`;
 				}
 			}
-			console.error(`${dim(`tool ${status}`)} ${event.toolName}${resultPreview}`);
+			console.error(`${pc.dim(`tool ${status}`)} ${event.toolName}${resultPreview}`);
 			break;
 		}
 
@@ -801,18 +796,18 @@ function logEvent(event: any) {
 
 		case 'compaction_start':
 			flushBuffers();
-			console.error(dim(`compaction start reason=${event.reason} tokens=${event.estimatedTokens}`));
+			console.error(pc.dim(`compaction start reason=${event.reason} tokens=${event.estimatedTokens}`));
 			break;
 
 		case 'compaction':
 			console.error(
-				dim(`compaction done messages ${event.messagesBefore} → ${event.messagesAfter}`),
+				pc.dim(`compaction done messages ${event.messagesBefore} → ${event.messagesAfter}`),
 			);
 			break;
 
 		case 'log':
 			flushBuffers();
-			console.error(`${dim(event.level ?? 'info')} ${event.message ?? ''}`);
+			console.error(`${pc.dim(event.level ?? 'info')} ${event.message ?? ''}`);
 			break;
 
 		case 'idle':
@@ -888,7 +883,7 @@ function startLocalProcess(
 	});
 	const pipeOutput = (data: Buffer) => {
 		for (const line of data.toString().trimEnd().split('\n')) {
-			if (line.trim()) console.error(dim(line));
+			if (line.trim()) console.error(pc.dim(line));
 		}
 	};
 	child.stdout?.on('data', pipeOutput);
@@ -1022,6 +1017,13 @@ async function buildCommand(args: BuildArgs) {
 const INTERNAL_DEV_SESSION = 'FLUE_INTERNAL_DEV_SESSION';
 const INTERNAL_DEV_READY = 'ready';
 
+function readCliVersion(): string {
+	const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+		version: string;
+	};
+	return pkg.version;
+}
+
 function devConfigFiles(args: DevArgs): string[] {
 	const cwd = process.cwd();
 	return resolveConfigCandidates({
@@ -1039,6 +1041,7 @@ async function devCommand(args: DevArgs) {
 		await dev({
 			root: cfg.root,
 			sourceRoot: cfg.sourceRoot,
+			version: readCliVersion(),
 			output: cfg.output,
 			target: cfg.target,
 			port: args.port || undefined,
@@ -1122,7 +1125,7 @@ function superviseDevCommand(args: DevArgs) {
 		for (const configFile of configFiles) {
 			configFileStates.set(configFile, readConfigFileState(configFile));
 		}
-		console.error(`${dim('config')} ${file} changed; restarting`);
+		console.error(`${pc.dim('config')} ${file} changed; restarting`);
 		restartRequested = true;
 		if (restartTimer) clearTimeout(restartTimer);
 		restartTimer = setTimeout(() => {

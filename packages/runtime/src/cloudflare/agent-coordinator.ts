@@ -12,6 +12,7 @@ import {
 	reconcileInterruptedSubmission,
 	submissionSyntheticRequest,
 } from '../runtime/agent-submissions.ts';
+import type { AgentInteractionStart } from '../runtime/dev-lifecycle-logger.ts';
 import { agentStreamPath } from '../runtime/event-stream-store.ts';
 import { assertAgentDispatchAdmissionInput, handleAgentRequest } from '../runtime/handle-agent.ts';
 import { handleStreamHead, handleStreamRead } from '../runtime/handle-stream-routes.ts';
@@ -84,6 +85,7 @@ interface CloudflareAgentRuntimeOptions {
 	readonly createEventStreamStore: (
 		instance: CloudflareAgentInstance,
 	) => import('../runtime/event-stream-store.ts').EventStreamStore;
+	readonly onInteractionStart?: (interaction: AgentInteractionStart) => void;
 }
 
 export interface CloudflareAgentRuntime {
@@ -551,6 +553,7 @@ class CloudflareAgentCoordinator {
 			createContext: (dispatchId) =>
 				this.createDurableContext(submissionSyntheticRequest(submission.input), dispatchId),
 			observers: this.observers,
+			onInteractionStart: this.options.onInteractionStart,
 			wrapExecution: (fn) => this.runWithInstanceContext(fn),
 			onSettled: () => {
 				void this.reconcileSubmissions().catch((error) => {

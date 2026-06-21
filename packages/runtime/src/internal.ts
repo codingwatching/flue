@@ -46,6 +46,8 @@ export type {
 	DirectAgentSubmissionInput,
 	DispatchAgentSubmissionInput,
 } from './runtime/agent-submissions.ts';
+export type { AgentInteractionStart } from './runtime/dev-lifecycle-logger.ts';
+export { installDevLifecycleLogger } from './runtime/dev-lifecycle-logger.ts';
 export type { DispatchInput, DispatchQueue } from './runtime/dispatch-queue.ts';
 export type { EventStreamStore } from './runtime/event-stream-store.ts';
 export { SqliteEventStreamStore } from './runtime/event-stream-store.ts';

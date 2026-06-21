@@ -22,6 +22,7 @@
 
 ### Fixes & Other Changes
 
+- `flue dev` now has a quieter, timestamped server output with discovered resources and concise agent and workflow lifecycle logs.
 - Workflow execution now validates input before initializing the agent or sandbox, waits for active operations to settle before terminal run persistence, and compensates failed stream or scheduler admission so runs are not left active indefinitely.
 - Fixed Cloudflare sandbox shell calls failing before execution because an `AbortSignal` was sent across the Durable Object RPC boundary.
 
