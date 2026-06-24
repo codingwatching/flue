@@ -198,6 +198,52 @@ test('does not report ready when an explicit requested port is occupied', async 
 	}
 });
 
+test('resolves attributed Markdown imports from workspace package exports', async () => {
+	const root = createFixtureRoot();
+	const port = await getAvailablePort();
+	const packageRoot = path.join(root, 'packages', 'workspace-content');
+	fs.mkdirSync(path.join(packageRoot, 'explore'), { recursive: true });
+	fs.writeFileSync(
+		path.join(packageRoot, 'package.json'),
+		JSON.stringify({
+			name: '@repo/workspace-content',
+			type: 'module',
+			exports: {
+				'./explore/SKILL.md': './explore/SKILL.md',
+				'./guide.md': './guide.md',
+			},
+		}),
+	);
+	fs.writeFileSync(
+		path.join(packageRoot, 'explore', 'SKILL.md'),
+		'---\nname: explore\ndescription: Explore a repository.\n---\nExplore carefully.\n',
+	);
+	fs.writeFileSync(path.join(packageRoot, 'guide.md'), '# Workspace guide\n');
+	const packageLink = path.join(root, 'node_modules', '@repo', 'workspace-content');
+	fs.mkdirSync(path.dirname(packageLink), { recursive: true });
+	fs.symlinkSync(packageRoot, packageLink, 'dir');
+	fs.mkdirSync(path.join(root, 'workflows'));
+	fs.writeFileSync(
+		path.join(root, 'workflows', 'workspace-imports.mjs'),
+		`import { defineAgent, defineWorkflow } from '@flue/runtime';
+import explore from '@repo/workspace-content/explore/SKILL.md' with { type: 'skill' };
+import guide from '@repo/workspace-content/guide.md' with { type: 'markdown' };
+export const route = async (_c, next) => next();
+export default defineWorkflow({ agent: defineAgent(() => ({ model: false, skills: [explore] })), async run() { return { skill: explore.name, guide }; } });
+`,
+	);
+
+	const dev = startDev(root, ['--target', 'node', '--port', String(port)]);
+	try {
+		await waitForServer(port, dev.logs, 'workspace-imports', {
+			skill: 'explore',
+			guide: '# Workspace guide\n',
+		});
+	} finally {
+		await dev.stop();
+	}
+});
+
 test('reloads the Node application when an external environment file changes', async () => {
 	const root = createFixtureRoot();
 	const envRoot = createFixtureRoot();

@@ -78,7 +78,10 @@ export async function createNodeApplicationLoader(options: {
 							if (id === resolvedEntry) return code;
 						},
 					},
-					viteGeneratedEntryDependencyResolver(options.root, { external: true }),
+					viteGeneratedEntryDependencyResolver(options.root, {
+						external: true,
+						importers: [resolvedEntry],
+					}),
 				],
 			});
 			try {
