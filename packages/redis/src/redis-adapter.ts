@@ -446,11 +446,8 @@ class RedisSubmissionStore implements AgentSubmissionStore {
 		const now = String(Date.now());
 		const affected: string[] = [];
 		for (const id of ids) {
-			const status = await this.backend.command('HGET', [
-				this.backend.keys.submission(id),
-				'status',
-			]);
-			if (status === 'queued' || status === 'running') {
+			const row = await this.backend.hgetall(this.backend.keys.submission(id));
+			if (row.status === 'queued' || row.status === 'running') {
 				// COALESCE-equivalent: first abort request wins.
 				await this.backend.command('HSETNX', [
 					this.backend.keys.submission(id),
