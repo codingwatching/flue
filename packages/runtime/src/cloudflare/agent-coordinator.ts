@@ -195,19 +195,35 @@ class CloudflareAgentCoordinator {
 	 */
 	private activeControllers = new Map<string, AbortController>();
 
-	async onStart(inherited: () => Promise<unknown> | unknown): Promise<void> {
-		await this.restoreSubmissionWake();
-		await inherited();
-		await this.reconcileSubmissions({ driverAlreadyArmed: true });
+	// Instance context is established at exactly two boundaries: the public
+	// coordinator entry points below (onStart/wakeSubmissions/onRequest/
+	// onFiberRecovered) and the durable submission fiber in
+	// startSubmissionAttempt. These are the only ways execution enters the
+	// Durable Object, and a recovered fiber resumes with no ambient context, so
+	// each must (re)establish it. Everything reachable from these boundaries —
+	// dispatch admission, reconciliation, materialization, submission
+	// processing — assumes the context is already present and never re-wraps.
+	onStart(inherited: () => Promise<unknown> | unknown): Promise<void> {
+		return this.runWithInstanceContext(async () => {
+			await this.restoreSubmissionWake();
+			await inherited();
+			await this.reconcileSubmissions({ driverAlreadyArmed: true });
+		});
 	}
 
-	async wakeSubmissions(): Promise<void> {
-		if (!(await this.submissions.hasUnsettledSubmissions())) return;
-		await this.armSubmissionWake({ idempotent: false });
-		await this.reconcileSubmissions({ driverAlreadyArmed: true });
+	wakeSubmissions(): Promise<void> {
+		return this.runWithInstanceContext(async () => {
+			if (!(await this.submissions.hasUnsettledSubmissions())) return;
+			await this.armSubmissionWake({ idempotent: false });
+			await this.reconcileSubmissions({ driverAlreadyArmed: true });
+		});
 	}
 
-	async onRequest(request: Request): Promise<Response | null> {
+	onRequest(request: Request): Promise<Response | null> {
+		return this.runWithInstanceContext(() => this.routeRequest(request));
+	}
+
+	private async routeRequest(request: Request): Promise<Response | null> {
 		if (isInternalDispatchRequest(request)) return this.admitDispatch(request);
 
 		if (isAbortRequest(request, this.agentName, this.instance.name)) {
@@ -254,29 +270,29 @@ class CloudflareAgentCoordinator {
 			});
 		}
 
-		return this.runWithInstanceContext(() =>
-			handleAgentRequest({
-				request,
-				id: this.instance.name,
-				agentName: this.agentName,
-				conversationStreamStore: this.prepared.conversationStreamStore,
-				admitAttachedSubmission: (payload, onEvent, waitForResult, traceCarrier) =>
-					this.admitAttachedSubmission(payload, onEvent, waitForResult, traceCarrier),
-			}),
-		);
+		return handleAgentRequest({
+			request,
+			id: this.instance.name,
+			agentName: this.agentName,
+			conversationStreamStore: this.prepared.conversationStreamStore,
+			admitAttachedSubmission: (payload, onEvent, waitForResult, traceCarrier) =>
+				this.admitAttachedSubmission(payload, onEvent, waitForResult, traceCarrier),
+		});
 	}
 
-	async onFiberRecovered(
+	onFiberRecovered(
 		ctx: CloudflareAgentRecoveredFiberContext,
 		inherited: () => Promise<unknown> | unknown,
 	): Promise<unknown> {
-		if (ctx.name !== FLUE_AGENT_SUBMISSION_ATTEMPT_FIBER) return inherited();
-		const submissionId = ctx.snapshot?.submissionId;
-		const attemptId = ctx.snapshot?.attemptId;
-		if (typeof submissionId !== 'string' || typeof attemptId !== 'string') return inherited();
-		await this.restoreSubmissionWake();
-		await this.submissions.requestSubmissionRecovery({ submissionId, attemptId });
-		await this.reconcileSubmissions({ driverAlreadyArmed: true });
+		return this.runWithInstanceContext(async () => {
+			if (ctx.name !== FLUE_AGENT_SUBMISSION_ATTEMPT_FIBER) return inherited();
+			const submissionId = ctx.snapshot?.submissionId;
+			const attemptId = ctx.snapshot?.attemptId;
+			if (typeof submissionId !== 'string' || typeof attemptId !== 'string') return inherited();
+			await this.restoreSubmissionWake();
+			await this.submissions.requestSubmissionRecovery({ submissionId, attemptId });
+			await this.reconcileSubmissions({ driverAlreadyArmed: true });
+		});
 	}
 
 	private get agentName(): string {
@@ -514,16 +530,14 @@ class CloudflareAgentCoordinator {
 		const conversationWriter = await this.ensureConversationWriter();
 		const agent = this.options.agents.find((record) => record.name === this.agentName)?.definition;
 		if (!agent) throw new Error('[flue] Agent target unavailable during durable reconciliation.');
-		const reconciled = await this.runWithInstanceContext(() =>
-			reconcileInterruptedSubmission(
-				this.submissions,
-				submission,
-				agent,
-				(dispatchId) =>
-					this.createDurableContext(submissionSyntheticRequest(submission.input), dispatchId),
-				{ ownerId: this.instance.ctx.id.toString(), leaseExpiresAt: 0 },
-				conversationWriter,
-			),
+		const reconciled = await reconcileInterruptedSubmission(
+			this.submissions,
+			submission,
+			agent,
+			(dispatchId) =>
+				this.createDurableContext(submissionSyntheticRequest(submission.input), dispatchId),
+			{ ownerId: this.instance.ctx.id.toString(), leaseExpiresAt: 0 },
+			conversationWriter,
 		);
 		if (reconciled.disposition === 'replacement') {
 			await this.startSubmissionAttempt(reconciled.submission);
@@ -556,7 +570,12 @@ class CloudflareAgentCoordinator {
 			await this.submissions.insertAttemptMarker(attempt);
 			running = this.instance.runFiber(FLUE_AGENT_SUBMISSION_ATTEMPT_FIBER, async (fiberCtx) => {
 				fiberCtx.stash({ submissionId: submission.submissionId, attemptId: submission.attemptId });
-				await this.processSubmissionEntry(submission, controller.signal);
+				// The fiber is the second context boundary: it may resume on a
+				// fresh isolate (via the SDK's crash replay) with no ambient
+				// context, so it establishes its own.
+				await this.runWithInstanceContext(() =>
+					this.processSubmissionEntry(submission, controller.signal),
+				);
 			});
 		} catch (error) {
 			this.activeAttempts.delete(attemptKey);
@@ -683,7 +702,6 @@ class CloudflareAgentCoordinator {
 			conversationWriter,
 			onInteractionStart: this.options.onInteractionStart,
 			signal,
-			wrapExecution: (fn) => this.runWithInstanceContext(fn),
 			onSettled: () => {
 				void this.reconcileSubmissions().catch((error) => {
 					console.error(

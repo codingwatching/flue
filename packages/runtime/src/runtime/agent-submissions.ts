@@ -544,11 +544,6 @@ export interface ProcessSubmissionOptions {
 	 */
 	isShutdownAbort?: (error: unknown) => boolean;
 	/**
-	 * Optional wrapper around the execution call. Used by the Cloudflare
-	 * coordinator to run within `runWithInstanceContext`.
-	 */
-	wrapExecution?: <T>(fn: () => Promise<T>) => Promise<T>;
-	/**
 	 * Called in the finally block after settlement. Used by the Cloudflare
 	 * coordinator to trigger post-settlement reconciliation.
 	 */
@@ -678,7 +673,7 @@ export async function processSubmission(opts: ProcessSubmissionOptions): Promise
 					},
 					execute,
 				);
-			result = opts.wrapExecution ? await opts.wrapExecution(run) : await run();
+			result = await run();
 		} catch (error) {
 			if (opts.isShutdownAbort?.(error)) {
 				if (submission.kind === 'direct') observers.fail(submission.submissionId, error);

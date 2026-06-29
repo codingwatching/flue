@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentExecutionStore } from '../src/agent-execution-store.ts';
@@ -624,6 +625,131 @@ describe('createCloudflareAgentRuntime()', () => {
 			abortRequestedAt: expect.any(Number),
 		});
 		consoleError.mockRestore();
+	});
+
+	it('admits an internal dispatch within the instance context', async () => {
+		const { storage } = makeFakeSql();
+		const recovery = makeRecoveryContext({ inspection: 'absent' });
+		// Mirror production: createContext-dependent code reaches
+		// getCloudflareContext(), which throws unless an instance context is
+		// active. The internal dispatch route must run inside one.
+		const contextStore = new AsyncLocalStorage<true>();
+		const runtime = createCloudflareAgentRuntime({
+			agents: [{ name: 'assistant', definition: {} as never }],
+			createContext: () => {
+				if (!contextStore.getStore()) {
+					throw new Error('[flue] createContext ran outside the instance context.');
+				}
+				return recovery.ctx;
+			},
+			runWithInstanceContext: (_instance, _agentName, callback) =>
+				contextStore.run(true, callback),
+		});
+		const instance = makeInstance(storage);
+		const executionStore = prepare(runtime, instance);
+
+		const response = await runtime.onRequest(
+			instance,
+			new Request('https://flue.invalid/__flue/internal/dispatch', {
+				method: 'POST',
+				body: JSON.stringify(dispatchInput()),
+			}),
+		);
+
+		expect(response?.status).toBe(200);
+		expect(await response?.json()).toMatchObject({ dispatchId: 'dispatch-1' });
+		expect(await executionStore.submissions.getSubmission('dispatch-1')).toMatchObject({
+			canonicalReadyAt: expect.any(Number),
+		});
+	});
+
+	it('reconciles unsettled work within the instance context on startup', async () => {
+		const { storage } = makeFakeSql();
+		const recovery = makeRecoveryContext({ inspection: 'absent' });
+		const contextStore = new AsyncLocalStorage<true>();
+		const runtime = createCloudflareAgentRuntime({
+			agents: [{ name: 'assistant', definition: {} as never }],
+			createContext: () => {
+				if (!contextStore.getStore()) {
+					throw new Error('[flue] createContext ran outside the instance context.');
+				}
+				return recovery.ctx;
+			},
+			runWithInstanceContext: (_instance, _agentName, callback) =>
+				contextStore.run(true, callback),
+		});
+		const instance = makeInstance(storage);
+		const executionStore = prepare(runtime, instance);
+		await executionStore.submissions.admitDispatch(dispatchInput());
+
+		await runtime.onStart(instance, () => {});
+
+		expect(await executionStore.submissions.getSubmission('dispatch-1')).toMatchObject({
+			canonicalReadyAt: expect.any(Number),
+		});
+	});
+
+	it('processes a submission within the instance context from a detached fiber', async () => {
+		const { storage } = makeFakeSql();
+		const processedInputs: unknown[] = [];
+		const session = {
+			async processSubmissionInput(input: unknown) {
+				processedInputs.push(input);
+			},
+			async recordSubmissionTerminal() {},
+		};
+		// The submission fiber can resume on a fresh isolate with no ambient
+		// context, so it must establish its own. Enforce that by requiring an
+		// active context for createContext and by running the fiber body only
+		// after onStart returns — i.e. outside any entry-point context.
+		const contextStore = new AsyncLocalStorage<true>();
+		const runtime = createCloudflareAgentRuntime({
+			agents: [{ name: 'assistant', definition: {} as never }],
+			createContext: () => {
+				if (!contextStore.getStore()) {
+					throw new Error('[flue] createContext ran outside the instance context.');
+				}
+				return {
+					async initializeRootHarness() {
+						return {
+							async session() {
+								return session;
+							},
+						};
+					},
+					setEventCallback() {},
+					createEvent(event: unknown) {
+						return event;
+					},
+					publishEvent() {},
+					emitEvent(event: unknown) {
+						return event;
+					},
+					async flushEventCallbacks() {},
+					subscribeEvent() {
+						return () => {};
+					},
+				} as unknown as FlueContextInternal;
+			},
+			runWithInstanceContext: (_instance, _agentName, callback) =>
+				contextStore.run(true, callback),
+		});
+		const instance = makeInstance(storage);
+		let runDetachedFiber: (() => Promise<void>) | undefined;
+		instance.runFiber = async (_name, callback) => {
+			runDetachedFiber = () => callback({ stash() {} });
+		};
+		const executionStore = prepare(runtime, instance);
+		await executionStore.submissions.admitDispatch(dispatchInput());
+		await executionStore.submissions.markSubmissionCanonicalReady('dispatch-1');
+
+		await runtime.onStart(instance, () => {});
+		expect(runDetachedFiber).toBeDefined();
+		await runDetachedFiber?.();
+
+		expect(processedInputs).toEqual([
+			{ ...dispatchInput(), kind: 'dispatch', submissionId: 'dispatch-1' },
+		]);
 	});
 
 	it('reports nothing to abort for an instance with no unsettled work', async () => {
