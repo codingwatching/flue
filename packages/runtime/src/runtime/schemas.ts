@@ -21,7 +21,7 @@ export const DirectAgentPayloadSchema = v.object({
 });
 
 export const WorkflowRouteParamSchema = v.object({ name: v.string() });
-/** Shared `?wait` query contract for agent and workflow invocation routes. */
+/** `?wait` query contract for the workflow invocation route. */
 export const InvocationQuerySchema = v.object({
 	wait: v.optional(v.literal('result')),
 });

@@ -253,7 +253,7 @@ export function getFlueRuntime(): FlueRuntime | undefined {
  *
  * The mounted sub-app exposes:
  *
- * - `POST /agents/:name/:id` — send a prompt (202 admission; `?wait=result` for a sync JSON result)
+ * - `POST /agents/:name/:id` — send a prompt (202 admission; fire-and-forget only)
  * - `GET/HEAD /agents/:name/:id` — DS event stream read
  * - `POST /workflows/:name` — start a workflow run (202 admission; `?wait=result` for a sync JSON result)
  * - `GET/HEAD /runs/:runId` — DS run event stream read
@@ -276,7 +276,6 @@ export function flue(): Hono {
 	app.post(
 		'/agents/:name/:id',
 		validated('param', AgentRouteParamSchema),
-		validated('query', InvocationQuerySchema),
 		agentRouteHandler,
 	);
 	// Abort all in-flight/queued work for an agent instance. A distinct (longer)
@@ -463,7 +462,6 @@ const agentRouteHandler: MiddlewareHandler = async (c) => {
 				request,
 				id,
 				agentName: name,
-				conversationStreamStore: rt.conversationStreamStore,
 				admitAttachedSubmission,
 			});
 		}

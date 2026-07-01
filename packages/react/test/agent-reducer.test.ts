@@ -17,14 +17,26 @@ describe('reduceAgentEvent()', () => {
 			emptyAgentState,
 			observed(
 				conversation([
-					{ id: 'entry-user', role: 'user', parts: [{ type: 'text', text: 'hello', state: 'done' }] },
+					{
+						id: 'entry-user',
+						role: 'user',
+						purpose: 'user',
+						display: 'visible',
+						parts: [{ type: 'text', text: 'hello', state: 'done' }],
+					},
 				]),
 			),
 		);
 
 		expect(state.historyReady).toBe(true);
 		expect(state.messages).toEqual([
-			{ id: 'entry-user', role: 'user', parts: [{ type: 'text', text: 'hello', state: 'done' }] },
+			{
+				id: 'entry-user',
+				role: 'user',
+				purpose: 'user',
+				display: 'visible',
+				parts: [{ type: 'text', text: 'hello', state: 'done' }],
+			},
 		]);
 	});
 
@@ -33,10 +45,18 @@ describe('reduceAgentEvent()', () => {
 			emptyAgentState,
 			observed(
 				conversation([
-					{ id: 'entry-user', role: 'user', parts: [{ type: 'file', mediaType: 'image/png' }] },
+					{
+						id: 'entry-user',
+						role: 'user',
+						purpose: 'user',
+						display: 'visible',
+						parts: [{ type: 'file', mediaType: 'image/png' }],
+					},
 					{
 						id: 'entry-assistant',
 						role: 'assistant',
+						purpose: 'assistant',
+						display: 'visible',
 						parts: [
 							{
 								type: 'dynamic-tool',
@@ -68,13 +88,17 @@ describe('reduceAgentEvent()', () => {
 	it('replaces the transcript when a new conversation is observed', () => {
 		let state = reduceAgentEvent(
 			emptyAgentState,
-			observed(conversation([{ id: 'entry-old', role: 'user', parts: [] }])),
+			observed(
+				conversation([
+					{ id: 'entry-old', role: 'user', purpose: 'user', display: 'visible', parts: [] },
+				]),
+			),
 		);
 		state = reduceAgentEvent(
 			state,
 			observed(
 				conversation([
-					{ id: 'entry-selected', role: 'assistant', parts: [{ type: 'text', text: 'selected', state: 'done' }] },
+					{ id: 'entry-selected', role: 'assistant', purpose: 'assistant', display: 'visible', parts: [{ type: 'text', text: 'selected', state: 'done' }] },
 				]),
 			),
 		);
@@ -85,7 +109,7 @@ describe('reduceAgentEvent()', () => {
 	it('clears the transcript when the observed conversation is absent', () => {
 		let state = reduceAgentEvent(
 			emptyAgentState,
-			observed(conversation([{ id: 'entry-user', role: 'user', parts: [] }])),
+			observed(conversation([{ id: 'entry-user', role: 'user', purpose: 'user', display: 'visible', parts: [] }])),
 		);
 		state = reduceAgentEvent(state, observed(undefined, 'absent'));
 
@@ -119,6 +143,8 @@ describe('reduceAgentEvent()', () => {
 					{
 						id: 'entry-user',
 						role: 'user',
+						purpose: 'user',
+						display: 'visible',
 						submissionId: 'submission-1',
 						parts: [{ type: 'text', text: 'hello', state: 'done' }],
 					},
@@ -152,12 +178,16 @@ describe('reduceAgentEvent()', () => {
 					{
 						id: 'entry-user',
 						role: 'user',
+						purpose: 'user',
+						display: 'visible',
 						submissionId: 'submission-1',
 						parts: [{ type: 'text', text: 'hello', state: 'done' }],
 					},
 					{
 						id: 'entry-assistant',
 						role: 'assistant',
+						purpose: 'assistant',
+						display: 'visible',
 						submissionId: 'submission-1',
 						parts: [{ type: 'text', text: 'hi', state: 'done' }],
 					},
@@ -184,6 +214,8 @@ describe('reduceAgentEvent()', () => {
 					{
 						id: 'entry-user',
 						role: 'user',
+						purpose: 'user',
+						display: 'visible',
 						submissionId: 'submission-1',
 						parts: [{ type: 'text', text: 'hello', state: 'done' }],
 					},

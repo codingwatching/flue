@@ -1,5 +1,4 @@
 import type { HttpClient } from '../http.ts';
-import type { AgentPromptResponse } from '../types.ts';
 
 export interface AgentPromptImage {
 	type: 'image';
@@ -27,27 +26,6 @@ export interface AgentSendResult {
 	offset: string;
 	/** Correlates the admitted prompt with its attached agent events. */
 	submissionId: string;
-}
-
-/** Result of one agent prompt that waited for the terminal result. */
-export interface AgentPromptResult extends AgentSendResult {
-	/** Terminal result of the prompt. */
-	result: AgentPromptResponse;
-}
-
-export async function promptAgent(
-	http: HttpClient,
-	name: string,
-	id: string,
-	options: AgentPromptOptions,
-): Promise<AgentPromptResult> {
-	const path = `/agents/${encodeURIComponent(name)}/${encodeURIComponent(id)}?wait=result`;
-	return http.json<AgentPromptResult>({
-		method: 'POST',
-		path,
-		body: { message: options.message, ...(options.images ? { images: options.images } : {}) },
-		signal: options.signal,
-	});
 }
 
 export async function sendAgent(

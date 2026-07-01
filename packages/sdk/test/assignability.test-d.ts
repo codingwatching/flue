@@ -3,7 +3,6 @@ import {
 	type FlueEvent as RuntimeFlueEvent,
 	type LlmMessage as RuntimeLlmMessage,
 	type ModelRequestInfo as RuntimeModelRequestInfo,
-	type PromptResponse as RuntimePromptResponse,
 	type PromptUsage as RuntimePromptUsage,
 	type RunRecord as RuntimeRunRecord,
 } from '@flue/runtime';
@@ -15,7 +14,6 @@ import type {
 // wire-conformance assertions below must still pin it to the runtime shape.
 import type { ConversationStreamChunk as SdkConversationChunk } from '../src/public/conversation-stream.ts';
 import {
-	type AgentPromptResponse,
 	type FlueConversationSnapshot,
 	IMAGE_DATA_OMITTED as SDK_IMAGE_DATA_OMITTED,
 	type FlueEvent as SdkFlueEvent,
@@ -57,17 +55,11 @@ const _snapshotTurnId: Extract<SdkFlueEvent, MessageSnapshotEvent>['turnId'] = {
 void _snapshot;
 void _snapshotTurnId;
 
-type _SettlementResult = Extract<
-	SdkFlueEvent,
-	CheckpointOneSettlementEvent
->['result'];
 type _SettlementError = Extract<
 	SdkFlueEvent,
 	CheckpointOneSettlementEvent
 >['error'];
-const _settlementResult: _SettlementResult = {} as unknown;
 const _settlementError: _SettlementError = { message: 'failed' };
-void _settlementResult;
 void _settlementError;
 
 type ExpectNever<T extends never> = T;
@@ -75,11 +67,6 @@ type _SdkMessageUpdateIsAbsent = ExpectNever<Extract<SdkFlueEvent, { type: 'mess
 type _RuntimeMessageUpdateIsAbsent = ExpectNever<
 	Extract<RuntimeFlueEvent, { type: 'message_update' }>
 >;
-
-// Direct-agent prompts (`?wait=result`) always resolve with the runtime
-// `PromptResponse`; the SDK duplicates the shape so it must stay assignable.
-const _prompt: AgentPromptResponse = {} as RuntimePromptResponse;
-void _prompt;
 
 // The SDK duplicates `PromptUsage`; the shapes must stay mutually assignable.
 const _usage: SdkPromptUsage = {} as RuntimePromptUsage;

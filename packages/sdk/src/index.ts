@@ -44,7 +44,6 @@ export type { ConversationStreamChunk } from './public/conversation-stream.ts';
 export type {
 	AgentPromptImage,
 	AgentPromptOptions,
-	AgentPromptResult,
 	AgentSendResult,
 } from './public/invoke.ts';
 export {
@@ -58,7 +57,6 @@ export {
 export type { FlueEventStream, FlueStreamOptions } from './public/stream.ts';
 export { UnsupportedFlueEventVersionError } from './public/stream.ts';
 export type {
-	AgentPromptResponse,
 	AgentSubmissionSettledEvent,
 	AttachedAgentEvent,
 	FlueEvent,

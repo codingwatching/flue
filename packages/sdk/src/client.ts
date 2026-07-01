@@ -19,9 +19,7 @@ import {
 } from './public/observe.ts';
 import {
 	type AgentPromptOptions,
-	type AgentPromptResult,
 	type AgentSendResult,
-	promptAgent,
 	sendAgent,
 } from './public/invoke.ts';
 import {
@@ -37,7 +35,6 @@ import {
 	type FlueStreamOptions,
 } from './public/stream.ts';
 import type {
-	AgentPromptResponse,
 	FlueEvent,
 	RunRecord,
 } from './types.ts';
@@ -90,14 +87,9 @@ export type CreateFlueClientOptions = HttpClientOptions;
 export interface FlueClient {
 	/** Direct interactions with persistent agent instances. */
 	agents: {
-		/** Resolves the terminal result for one agent prompt. */
-		prompt(name: string, id: string, options: AgentPromptOptions): Promise<AgentPromptResult>;
 		/** Starts one prompt without waiting for completion. */
 		send(name: string, id: string, options: AgentPromptOptions): Promise<AgentSendResult>;
-		wait<TResult = AgentPromptResponse>(
-			admission: AgentSendResult,
-			options?: AgentWaitOptions,
-		): Promise<TResult>;
+		wait(admission: AgentSendResult, options?: AgentWaitOptions): Promise<void>;
 		/**
 		 * Aborts all in-flight and queued durable work for an agent instance
 		 * (the agent's currently running submission and any queued behind it).
@@ -210,7 +202,6 @@ export function createFlueClient(options: CreateFlueClientOptions): FlueClient {
 	const http = new HttpClient(options);
 	return {
 		agents: {
-			prompt: (name, id, opts) => promptAgent(http, name, id, opts),
 			send: (name, id, opts) => sendAgent(http, name, id, opts),
 			wait: (admission, opts) => waitForAgentSubmission(http, admission, opts),
 			abort: (name, id, opts = {}) =>

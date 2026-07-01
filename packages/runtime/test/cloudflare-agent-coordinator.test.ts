@@ -115,9 +115,6 @@ function makeRecoveryContext(options: {
 		inspectSubmissionInput() {
 			return options.inspection ?? 'uncertain';
 		},
-		reconstructSubmissionResult() {
-			return undefined;
-		},
 		async recordSubmissionTerminal(input: AgentSubmissionInterruption) {
 			options.events?.push('record-terminal');
 			terminalRecords.push(input);

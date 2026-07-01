@@ -1115,7 +1115,7 @@ export class SubmissionTimeoutError extends FlueError {
  * already settled (or committed its terminal record) is never aborted; an abort
  * that loses the race to a completed response settles as completed instead.
  *
- * Delivered to a waiting `wait()`/observer and recorded as the durable terminal
+ * Rejects a waiting `wait()` call and is recorded as the durable terminal
  * outcome: a `submission_aborted` conversation advisory (both kinds) plus, for
  * direct submissions, a `submission_settled` record with `outcome: 'aborted'`.
  */

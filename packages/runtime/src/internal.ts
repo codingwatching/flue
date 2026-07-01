@@ -87,7 +87,6 @@ export type {
 	CreateAgentContextOptions,
 	CreateWorkflowContextFn,
 	CreateWorkflowContextOptions,
-	DirectAttachedOptions,
 	FailRecoveredRunOptions,
 	HandleAgentOptions,
 	HandleWorkflowOptions,
@@ -114,7 +113,6 @@ export {
 	assertWorkflowDefinition,
 	failRecoveredRun,
 	handleWorkflowRequest,
-	invokeDirectAttached,
 	invokeWorkflowAttached,
 } from './runtime/handle-agent.ts';
 export {

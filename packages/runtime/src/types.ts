@@ -983,7 +983,6 @@ type FlueEventVariant =
 			type: 'submission_settled';
 			submissionId: string;
 			outcome: 'completed' | 'failed' | 'aborted';
-			result?: unknown;
 			error?: {
 				name?: string;
 				message: string;
@@ -1079,4 +1078,3 @@ export type FlueEventInputCallback = (
 ) => void | Promise<void>;
 
 export type FlueEventCallback = (event: FlueEvent) => void | Promise<void>;
-export type AttachedAgentEventCallback = (event: AttachedAgentEvent) => void | Promise<void>;

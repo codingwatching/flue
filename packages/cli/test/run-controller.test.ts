@@ -23,9 +23,8 @@ describe('parseAgentInput()', () => {
 describe('runTarget()', () => {
 	it('sends and waits for one agent submission', async () => {
 		const admission = { streamUrl: 'https://example.com/stream', offset: '0', submissionId: 'sub' };
-		const result = { text: 'done', usage: {}, model: { provider: 'test', id: 'test' } };
 		const send = vi.fn().mockResolvedValue(admission);
-		const wait = vi.fn().mockResolvedValue(result);
+		const wait = vi.fn().mockResolvedValue(undefined);
 		const client = { agents: { send, wait } } as unknown as FlueClient;
 
 		await expect(
@@ -35,7 +34,7 @@ describe('runTarget()', () => {
 				instanceId: 'instance',
 				input: { message: 'hello' },
 			}),
-		).resolves.toEqual({ kind: 'agent', instanceId: 'instance', result });
+		).resolves.toEqual({ kind: 'agent' });
 		expect(send).toHaveBeenCalledWith('support', 'instance', {
 			message: 'hello',
 			signal: undefined,

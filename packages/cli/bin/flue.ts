@@ -872,7 +872,7 @@ async function run(args: RunArgs) {
 		);
 		presenter.flush();
 		if (completed.kind === 'workflow' && !runIdShown) row('run', completed.runId);
-		if (completed.result !== undefined && completed.result !== null) {
+		if (completed.kind === 'workflow' && completed.result !== undefined && completed.result !== null) {
 			console.error('');
 			console.log(JSON.stringify(completed.result));
 		}

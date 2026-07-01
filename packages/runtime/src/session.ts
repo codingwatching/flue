@@ -54,8 +54,6 @@ import {
 	aggregateConversationUsageSince,
 	classifyConversationSubmission,
 	getActiveConversationPathSince,
-	getAssistantText,
-	getLatestCompletedAssistantEntry,
 	getLatestConversationCompaction,
 	projectConversationModelContext,
 	projectConversationModelContextEntries,
@@ -1075,31 +1073,6 @@ export class Session implements FlueSession, AgentSubmissionSession {
 			this.canonicalInputEntryId(input),
 			{ contextWindow: this.agentLoop.state.model?.contextWindow ?? 0 },
 		));
-	}
-
-	/**
-	 * Reconstruct the submission result from persisted history for a
-	 * submission whose canonical response completed but whose settlement was
-	 * interrupted. Mirrors the response shape of `processSubmissionInput`
-	 * (text/usage/model) without replaying any provider work, so
-	 * reconciliation can resolve a waiting observer with the real result.
-	 * Returns undefined when the input or a completed response is absent.
-	 */
-	async reconstructSubmissionResult(input: AgentSubmissionInput): Promise<PromptResponse | undefined> {
-		const conversation = await this.conversationWriter.getConversation(this.conversationId);
-		if (!conversation) return undefined;
-		const following = getActiveConversationPathSince(conversation, this.canonicalInputEntryId(input));
-		if (!following) return undefined;
-		const assistantEntry = getLatestCompletedAssistantEntry(following);
-		if (!assistantEntry || assistantEntry.message.role !== 'assistant') return undefined;
-		const assistant = assistantEntry.message;
-		const usage = aggregateConversationUsageSince(conversation, this.canonicalInputEntryId(input));
-		if (!usage) return undefined;
-		return {
-			text: getAssistantText(assistant),
-			usage,
-			model: { provider: assistant.provider, id: assistant.model },
-		};
 	}
 
 	processSubmissionInput(

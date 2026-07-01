@@ -53,6 +53,8 @@ describe('useFlueAgent()', () => {
 		{
 			id: 'entry-user',
 			role: 'user',
+			purpose: 'user',
+			display: 'visible',
 			submissionId: 'submission-1',
 			parts: [{ type: 'text', text: 'history', state: 'done' }],
 		},
@@ -148,6 +150,8 @@ describe('useFlueAgent()', () => {
 					{
 						id: 'entry-user',
 						role: 'user',
+						purpose: 'user',
+						display: 'visible',
 						submissionId: 'submission-1',
 						parts: [{ type: 'text', text: 'hello', state: 'done' }],
 					},

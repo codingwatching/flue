@@ -14,7 +14,6 @@ import {
 	type DispatchQueue,
 } from '../src/internal.ts';
 import {
-	createAgentSubmissionObserverRegistry,
 	createAgentSubmissionSessionHandler,
 	type DirectAgentSubmissionInput,
 } from '../src/runtime/agent-submissions.ts';
@@ -43,30 +42,6 @@ function createProvider(): FauxProviderRegistration {
 	providers.push(provider);
 	return provider;
 }
-
-describe('createAgentSubmissionObserverRegistry()', () => {
-	it('settles attached observers when event callbacks fail', async () => {
-		const registry = createAgentSubmissionObserverRegistry();
-		const attachment = registry.attach('direct:observer-failure', {
-			onEvent: async () => {
-				throw new Error('Socket disconnected');
-			},
-		});
-
-		await expect(
-			registry.publish('direct:observer-failure', {
-				type: 'idle',
-				instanceId: 'agent-1',
-				v: 3,
-				eventIndex: 0,
-				timestamp: '2026-06-01T00:00:00.000Z',
-			}),
-		).resolves.toBeUndefined();
-		registry.complete('direct:observer-failure', 'done');
-
-		await expect(attachment.completion).resolves.toBe('done');
-	});
-});
 
 describe('dispatch()', () => {
 	it('rejects calls when the runtime has not been configured', async () => {

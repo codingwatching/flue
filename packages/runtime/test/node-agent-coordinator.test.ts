@@ -1099,14 +1099,14 @@ describe('NodeAgentCoordinator', () => {
 	// ─── Direct prompt admission ────────────────────────────────────────────
 
 		describe('direct prompt admission', () => {
-		it('materializes the canonical conversation before detached admission returns', async () => {
+		it('materializes the canonical conversation before admission returns', async () => {
 			const dbPath = createTempDbPath();
 			const provider = createFauxProvider();
 			provider.setResponses([fauxAssistantMessage('Later reply.')]);
 			const { coordinator } = await createFauxCoordinator(dbPath, provider);
 
 			const receipt = await coordinator
-				.createAdmission('assistant', 'instance-1')({ message: 'Hello' }, undefined, false);
+				.createAdmission('assistant', 'instance-1')({ message: 'Hello' });
 			const adapter = sqlite(dbPath);
 			await adapter.migrate?.();
 			const { conversationStreamStore } = await adapter.connect();
@@ -1133,9 +1133,13 @@ describe('NodeAgentCoordinator', () => {
 			const receipt = await admit({ message: 'Hello from direct prompt' });
 
 			expect(receipt.submissionId).toEqual(expect.any(String));
-			expect(receipt.result).toBeDefined();
+			// Admission is fire-and-forget; wait for the durable lifecycle to settle.
+			await coordinator.waitForIdle();
 			// The submission should be settled in the store.
 			expect(await executionStore.submissions.hasUnsettledSubmissions()).toBe(false);
+			const settled = await executionStore.submissions.getSubmission(receipt.submissionId);
+			expect(settled?.status).toBe('settled');
+			expect(settled?.error).toBeUndefined();
 		});
 
 		it('persists direct prompt submission across store reopens', async () => {
@@ -1146,6 +1150,8 @@ describe('NodeAgentCoordinator', () => {
 
 			const admit = coordinator.createAdmission('assistant', 'instance-1');
 			await admit({ message: 'Hello persisted' });
+			// Admission is fire-and-forget; wait for the durable lifecycle to settle.
+			await coordinator.waitForIdle();
 
 			// "Restart": open the same file with a fresh store and verify settled.
 			const reopened = await openExecutionStore(dbPath);
@@ -1165,6 +1171,9 @@ describe('NodeAgentCoordinator', () => {
 			const receipt = await coordinator.createAdmission('assistant', 'instance-1')({
 				message: 'Hello from direct prompt',
 			});
+			// Admission is fire-and-forget; the user message is persisted during
+			// processing, so wait for the durable lifecycle to settle before reading.
+			await coordinator.waitForIdle();
 
 			const adapter = sqlite(dbPath);
 			await adapter.migrate?.();
@@ -1184,51 +1193,6 @@ describe('NodeAgentCoordinator', () => {
 				submissionId: receipt.submissionId,
 				parts: [{ type: 'text', text: 'Hello from direct prompt', state: 'done' }],
 			});
-		});
-
-		it('forwards events to the attached observer during processing', async () => {
-			const dbPath = createTempDbPath();
-			const provider = createFauxProvider();
-			provider.setResponses([fauxAssistantMessage('Event test reply.')]);
-			const { coordinator } = await createFauxCoordinator(dbPath, provider);
-
-			const events: unknown[] = [];
-			const admit = coordinator.createAdmission('assistant', 'instance-1');
-			await admit({ message: 'Hello events' }, (event) => {
-				events.push(event);
-			});
-
-			// Should have received at least one event during processing.
-			expect(events.length).toBeGreaterThan(0);
-			const submissionIds = new Set<string>();
-			for (const event of events) {
-				const e = event as Record<string, unknown>;
-				expect(e.instanceId).toBe('instance-1');
-				expect(e).not.toHaveProperty('runId');
-				expect(e.submissionId).toEqual(expect.any(String));
-				submissionIds.add(e.submissionId as string);
-				if (e.type === 'message_start' || e.type === 'message_end') {
-					expect(e.turnId).toEqual(expect.any(String));
-				}
-			}
-			expect(submissionIds.size).toBe(1);
-		});
-
-		it('resolves the waiting direct prompt with the real result when completion settlement loses the attempt CAS', async () => {
-			const dbPath = createTempDbPath();
-			const provider = createFauxProvider();
-			provider.setResponses([fauxAssistantMessage('Superseded but real reply.')]);
-			const { coordinator, executionStore } = await createFauxCoordinator(dbPath, provider);
-			// Simulate another claimant superseding this attempt between
-			// processing and settlement: the completion CAS reports a stale
-			// attempt. The caller's completion promise must still resolve with
-			// the real response instead of hanging forever.
-			executionStore.submissions.completeSubmission = async () => false;
-
-			const admit = coordinator.createAdmission('assistant', 'instance-1');
-			const receipt = await admit({ message: 'Hello superseded' });
-
-			expect(receipt.result).toMatchObject({ text: 'Superseded but real reply.' });
 		});
 
 		it('queues concurrent same-session direct prompts instead of rejecting', async () => {
@@ -1251,6 +1215,8 @@ describe('NodeAgentCoordinator', () => {
 			// Both should resolve (not reject).
 			expect(result1).toBeDefined();
 			expect(result2).toBeDefined();
+			// Admission is fire-and-forget; wait for both to settle durably.
+			await coordinator.waitForIdle();
 			expect(await executionStore.submissions.hasUnsettledSubmissions()).toBe(false);
 		});
 	});
@@ -1325,37 +1291,6 @@ describe('NodeAgentCoordinator', () => {
 			expect(submission?.error).toBeUndefined();
 		});
 
-		it('silently recovers a direct prompt after restart with no attached observer', async () => {
-			const dbPath = createTempDbPath();
-			const provider = createFauxProvider();
-			provider.setResponses([fauxAssistantMessage('Recovered without observer.')]);
-			const store = await openExecutionStore(dbPath);
-
-			// Admit and claim without processing — simulates crash.
-			await store.submissions.admitDirect({
-				kind: 'direct',
-				submissionId: 'direct-no-observer',
-				agent: 'assistant',
-				id: 'instance-1',
-				payload: { message: 'Hello silent' },
-				acceptedAt: new Date().toISOString(),
-			});
-			await store.submissions.markSubmissionCanonicalReady('direct-no-observer');
-			await store.submissions.claimSubmission({
-				submissionId: 'direct-no-observer',
-				attemptId: 'attempt-silent',
-				ownerId: 'test-owner',
-				leaseExpiresAt: 1,
-			});
-
-			// "Restart": no observer attached. Should still reconcile and settle.
-			const { coordinator, executionStore } = await createFauxCoordinator(dbPath, provider);
-			await coordinator.reconcileSubmissions();
-
-			const submission = await executionStore.submissions.getSubmission('direct-no-observer');
-			expect(submission).toMatchObject({ status: 'settled' });
-			expect(submission?.error).toBeUndefined();
-		});
 	});
 
 	// ─── Real Anthropic API smoke (integration) ─────────────────────────────

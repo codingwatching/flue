@@ -36,6 +36,8 @@ describe('AgentSession', () => {
 				{
 					id: 'entry-user',
 					role: 'user',
+					purpose: 'user',
+					display: 'visible',
 					submissionId: 'submission-1',
 					parts: [{ type: 'text', text: 'first', state: 'done' }],
 				},
@@ -55,10 +57,12 @@ describe('AgentSession', () => {
 				{
 					id: 'entry-user',
 					role: 'user',
+					purpose: 'user',
+					display: 'visible',
 					submissionId: 'submission-1',
 					parts: [{ type: 'text', text: 'first', state: 'done' }],
 				},
-				{ id: 'entry-assistant', role: 'assistant', parts: [], metadata: { model: { provider: 'test', id: 'model' } } },
+				{ id: 'entry-assistant', role: 'assistant', purpose: 'assistant', display: 'visible', parts: [], metadata: { model: { provider: 'test', id: 'model' } } },
 			]),
 			offset: 'offset-2',
 			phase: 'live',
@@ -122,6 +126,8 @@ describe('AgentSession', () => {
 				{
 					id: 'entry-canonical-user',
 					role: 'user',
+					purpose: 'user',
+					display: 'visible',
 					submissionId: 'submission-1',
 					parts: [{ type: 'text', text: 'hello', state: 'done' }],
 				},

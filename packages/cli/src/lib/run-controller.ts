@@ -1,7 +1,6 @@
 import type {
 	AgentPromptImage,
 	ConversationStreamChunk,
-	AgentPromptResponse,
 	FlueClient,
 	FlueEvent,
 	WorkflowRunResult,
@@ -28,7 +27,7 @@ interface WorkflowRunTarget {
 export type RunTarget = AgentRunTarget | WorkflowRunTarget;
 
 export type RunTargetResult =
-	| { kind: 'agent'; instanceId: string; result: AgentPromptResponse }
+	| { kind: 'agent' }
 	| { kind: 'workflow'; runId: string; result: unknown };
 
 export async function runTarget(
@@ -42,11 +41,11 @@ export async function runTarget(
 			...target.input,
 			signal,
 		});
-		const result = await client.agents.wait<AgentPromptResponse>(admission, {
+		await client.agents.wait(admission, {
 			onEvent: onEvent as ((event: ConversationStreamChunk) => void | Promise<void>) | undefined,
 			signal,
 		});
-		return { kind: 'agent', instanceId: target.instanceId, result };
+		return { kind: 'agent' };
 	}
 	const completed: WorkflowRunResult = await client.workflows.run(target.name, {
 		input: target.input,

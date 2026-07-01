@@ -15,7 +15,6 @@ import type { PromptUsage } from './types.ts';
 interface AgentConversationSettlement {
 	submissionId: string;
 	outcome: 'completed' | 'failed' | 'aborted';
-	result?: unknown;
 	error?: unknown;
 }
 
@@ -75,7 +74,6 @@ type ConversationStreamChunkBody =
 			conversationId: string;
 			submissionId: string;
 			outcome: 'completed' | 'failed' | 'aborted';
-			result?: unknown;
 			error?: unknown;
 	  };
 
@@ -278,7 +276,6 @@ function encodeRecord(
 							conversationId,
 							submissionId: record.submissionId,
 							outcome: record.outcome,
-							...(record.result === undefined ? {} : { result: record.result }),
 							...(record.error === undefined ? {} : { error: record.error }),
 						},
 					]
@@ -330,7 +327,6 @@ function projectSettlements(
 		.map((record) => ({
 			submissionId: record.submissionId as string,
 			outcome: record.outcome,
-			...(record.result === undefined ? {} : { result: record.result }),
 			...(record.error === undefined ? {} : { error: record.error }),
 		}));
 }

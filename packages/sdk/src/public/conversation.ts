@@ -110,7 +110,6 @@ export interface FlueConversationMessage {
 export interface FlueConversationSettlement {
 	submissionId: string;
 	outcome: 'completed' | 'failed' | 'aborted';
-	result?: unknown;
 	error?: unknown;
 }
 

@@ -211,23 +211,6 @@ export function getActiveConversationPathSince(
 	return boundaryIndex === -1 ? undefined : path.slice(boundaryIndex + 1);
 }
 
-export function getLatestCompletedAssistantEntry(
-	entries: readonly ReducedEntry[],
-): ReducedMessageEntry | undefined {
-	return entries.findLast(
-		(entry): entry is ReducedMessageEntry =>
-			entry.type === 'message' &&
-			entry.message.role === 'assistant' &&
-			(entry.message.stopReason === 'stop' || entry.message.stopReason === 'length'),
-	);
-}
-
-export function getAssistantText(assistant: AssistantMessage): string {
-	return assistant.content
-		.flatMap((block) => (block.type === 'text' ? [block.text] : []))
-		.join('\n');
-}
-
 export function aggregateConversationUsageSince(
 	conversation: ReducedConversationState,
 	boundaryId: string | null,

@@ -1,6 +1,5 @@
 import type {
 	AgentPromptImage,
-	AgentPromptResponse,
 	ConversationStreamChunk,
 	FlueClient,
 	FlueEvent,
@@ -220,15 +219,15 @@ export function createConsoleController(options: ConsoleControllerOptions): Cons
 		target: Extract<ExecutionTarget, { kind: 'agent' }>,
 		onEvent: (event: ConversationStreamChunk | FlueEvent) => void,
 		signal: AbortSignal,
-	): Promise<{ kind: 'agent'; result: AgentPromptResponse }> {
+	): Promise<{ kind: 'agent' }> {
 		const admission = admissionQueue.then(() => {
 			signal.throwIfAborted();
 			return options.client.agents.send(target.name, target.instanceId, { ...target.input, signal });
 		});
 		admissionQueue = admission.then(() => undefined, () => undefined);
 		const admitted = await admission;
-		const result = await options.client.agents.wait<AgentPromptResponse>(admitted, { onEvent, signal });
-		return { kind: 'agent', result };
+		await options.client.agents.wait(admitted, { onEvent, signal });
+		return { kind: 'agent' };
 	}
 
 	async function runWorkflowTarget(

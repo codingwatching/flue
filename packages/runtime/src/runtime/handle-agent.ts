@@ -16,16 +16,14 @@ import {
 } from '../execution-interceptor.ts';
 import { assertProductEventV3 } from '../product-event.ts';
 import type {
-	AttachedAgentEventCallback,
 	DirectAgentPayload,
 	FlueEvent,
 	FlueEventCallback,
 } from '../types.ts';
 import { isWorkflowDefinition, type WorkflowDefinition } from '../workflow-definition.ts';
 import type { AttachedAgentSubmissionAdmission } from './agent-submissions.ts';
-import type { ConversationStreamStore } from './conversation-stream-store.ts';
 import type { DispatchInput } from './dispatch-queue.ts';
-import { agentStreamPath, type EventStreamStore, runStreamPath } from './event-stream-store.ts';
+import { type EventStreamStore, runStreamPath } from './event-stream-store.ts';
 
 import { generateWorkflowRunId } from './ids.ts';
 import { isBufferedRunEvent, isStreamExcludedEvent, type RunStore } from './run-store.ts';
@@ -109,7 +107,6 @@ export interface HandleAgentOptions {
 	request: Request;
 	id: string;
 	agentName: string;
-	conversationStreamStore: ConversationStreamStore;
 	admitAttachedSubmission: AttachedAgentSubmissionAdmission;
 }
 
@@ -166,34 +163,25 @@ function admissionResponse(
 /**
  * Handle one attached `/agents/:name/:id` prompt interaction.
  *
- * Returns accepted stream coordinates by default, or a synchronous JSON
- * result when `?wait=result` is requested. Events are available via the DS
- * stream read endpoint (GET on the same URL).
+ * Admission is fire-and-forget: it returns accepted stream coordinates.
+ * Events are available via the DS stream read endpoint (GET on the same URL).
  */
 export async function handleAgentRequest(opts: HandleAgentOptions): Promise<Response> {
-	const { request, id } = opts;
+	const { request } = opts;
 
 	try {
+		if (new URL(request.url).searchParams.has('wait')) {
+			throw new InvalidRequestError({
+				reason:
+					'Agent prompts are fire-and-forget and do not support `?wait=result`. ' +
+					"Await completion with the SDK client's `agents.wait()`, or read the conversation stream (GET this URL).",
+			});
+		}
 		const rawPayload = await parseJsonBody(request);
 		const payload = parseDirectAgentPayload(rawPayload);
 		const traceCarrier = extractTraceCarrier(request.headers);
-		const directOptions: DirectAttachedOptions = {
-			payload,
-			admitAttachedSubmission: opts.admitAttachedSubmission,
-			traceCarrier,
-		};
 		const streamUrl = invocationStreamUrl(request);
-		if (new URL(request.url).searchParams.get('wait') === 'result') {
-			const streamPath = agentStreamPath(opts.agentName, id);
-			const offset = (await opts.conversationStreamStore.getMeta(streamPath))?.nextOffset ?? '-1';
-			return runDirectSyncMode(directOptions, streamUrl, offset);
-		}
-		const receipt = await opts.admitAttachedSubmission(
-			payload,
-			undefined,
-			false,
-			traceCarrier,
-		);
+		const receipt = await opts.admitAttachedSubmission(payload, traceCarrier);
 		const offset = receipt.offset ?? '-1';
 		return admissionResponse(
 			{ streamUrl, offset, submissionId: receipt.submissionId },
@@ -247,13 +235,6 @@ export interface InvokeWorkflowAttachedOptions {
 	onEvent?: FlueEventCallback;
 	runStore?: RunStore;
 	eventStreamStore: EventStreamStore;
-}
-
-export interface DirectAttachedOptions {
-	payload: DirectAgentPayload;
-	admitAttachedSubmission: AttachedAgentSubmissionAdmission;
-	onEvent?: AttachedAgentEventCallback;
-	traceCarrier?: FlueTraceCarrier;
 }
 
 export interface WorkflowAttachedInvocationResult {
@@ -552,31 +533,6 @@ function findTerminalRunEvent(
 	return [...events]
 		.reverse()
 		.find((event): event is Extract<FlueEvent, { type: 'run_end' }> => event.type === 'run_end');
-}
-
-async function runDirectSyncMode(
-	opts: DirectAttachedOptions,
-	streamUrl: string,
-	offset: string,
-): Promise<Response> {
-	const receipt = await invokeDirectAttached(opts);
-	return new Response(
-		JSON.stringify({
-			result: receipt.result === undefined ? null : receipt.result,
-			streamUrl,
-			offset,
-			submissionId: receipt.submissionId,
-		}),
-		{
-			headers: { 'content-type': 'application/json' },
-		},
-	);
-}
-
-export async function invokeDirectAttached(
-	opts: DirectAttachedOptions,
-): ReturnType<AttachedAgentSubmissionAdmission> {
-	return opts.admitAttachedSubmission(opts.payload, opts.onEvent, true, opts.traceCarrier);
 }
 
 async function runSyncMode(execution: AdmittedWorkflowExecution): Promise<Response> {

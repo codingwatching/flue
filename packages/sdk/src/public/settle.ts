@@ -54,11 +54,11 @@ export class FlueExecutionError extends Error {
 	}
 }
 
-export async function waitForAgentSubmission<TResult>(
+export async function waitForAgentSubmission(
 	http: HttpClient,
 	admission: AgentSendResult,
 	options: AgentWaitOptions = {},
-): Promise<TResult> {
+): Promise<void> {
 	const url = new URL(admission.streamUrl);
 	url.searchParams.set('view', 'updates');
 	const stream = createFlueEventStream<ConversationStreamChunk>(
@@ -76,7 +76,7 @@ export async function waitForAgentSubmission<TResult>(
 		throwIfAborted(options.signal);
 		if (chunk.type !== 'submission-settled') continue;
 		if (chunk.submissionId !== admission.submissionId) continue;
-		if (chunk.outcome === 'completed') return chunk.result as TResult;
+		if (chunk.outcome === 'completed') return;
 		throw new FlueExecutionError({
 			target: 'agent_submission',
 			targetId: admission.submissionId,

@@ -3,8 +3,6 @@ import {
 	aggregateConversationUsageSince,
 	classifyConversationSubmission,
 	getActiveConversationPathSince,
-	getAssistantText,
-	getLatestCompletedAssistantEntry,
 	getLatestConversationCompaction,
 	projectConversationModelContextEntries,
 	projectConversationUi,
@@ -725,13 +723,10 @@ describe('reduceConversationRecords()', () => {
 		expect(getActiveConversationPathSince(conversation, 'entry_missing')).toBeUndefined();
 	});
 
-	it('projects canonical response helpers from the exact submission boundary', () => {
+	it('aggregates usage from the exact submission boundary', () => {
 		const state = reduceConversationRecords(createReducedInstanceState(), canonicalConversation(), '8');
 		const conversation = required(state.conversations.get('conv_01'));
-		const following = required(getActiveConversationPathSince(conversation, 'entry_user'));
-		const assistantEntry = required(getLatestCompletedAssistantEntry(following));
 
-		expect(getAssistantText(assistantEntry.message as never)).toBe('Hi there');
 		expect(aggregateConversationUsageSince(conversation, 'entry_user')).toEqual(usage);
 		expect(aggregateConversationUsageSince(conversation, 'entry_missing')).toBeUndefined();
 	});

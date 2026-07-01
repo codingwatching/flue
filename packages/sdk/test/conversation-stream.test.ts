@@ -256,9 +256,9 @@ describe('applyConversationChunk()', () => {
 
 	it('records a submission settlement', () => {
 		const conversation = reduce([
-			{ type: 'submission-settled', conversationId: 'c1', submissionId: 's1', outcome: 'completed', result: { ok: true } },
+			{ type: 'submission-settled', conversationId: 'c1', submissionId: 's1', outcome: 'completed' },
 		]);
-		expect(conversation.settlements).toEqual([{ submissionId: 's1', outcome: 'completed', result: { ok: true } }]);
+		expect(conversation.settlements).toEqual([{ submissionId: 's1', outcome: 'completed' }]);
 	});
 });
 

@@ -251,7 +251,6 @@ interface ChildSessionRetainedRecord extends ConversationRecordEnvelope {
 export interface SubmissionSettledRecord extends ConversationRecordEnvelope {
 	type: 'submission_settled';
 	outcome: 'completed' | 'failed' | 'aborted';
-	result?: unknown;
 	error?: unknown;
 }
 

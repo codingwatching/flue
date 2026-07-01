@@ -7,7 +7,6 @@ import type { FlueContextInternal } from '../client.ts';
 import { ConversationRecordWriter } from '../conversation-writer.ts';
 import type { FlueTraceCarrier } from '../execution-interceptor.ts';
 import {
-	createAgentSubmissionObserverRegistry,
 	type createAgentSubmissionSessionHandler,
 	createDirectAgentSubmissionInput,
 	materializeAgentSubmissionSession,
@@ -28,7 +27,7 @@ import {
 	handleAgentConversationHead,
 	handleAgentConversationRead,
 } from '../runtime/handle-conversation-routes.ts';
-import type { AttachedAgentEvent, DirectAgentPayload } from '../types.ts';
+import type { DirectAgentPayload } from '../types.ts';
 import {
 	createSqlAgentExecutionStore,
 	createSqlConversationStores,
@@ -125,7 +124,6 @@ export function createCloudflareAgentRuntime(
 	options: CloudflareAgentRuntimeOptions,
 ): CloudflareAgentRuntime {
 	const coordinators = new WeakMap<CloudflareAgentInstance, CloudflareAgentCoordinator>();
-	const observers = createAgentSubmissionObserverRegistry();
 	const activeAttempts = new Set<string>();
 
 	const getCoordinator = (instance: CloudflareAgentInstance): CloudflareAgentCoordinator => {
@@ -153,7 +151,6 @@ export function createCloudflareAgentRuntime(
 					instance,
 					prepared,
 					options,
-					observers,
 					activeAttempts,
 				),
 			);
@@ -178,7 +175,6 @@ class CloudflareAgentCoordinator {
 		private readonly instance: CloudflareAgentInstance,
 		private readonly prepared: CloudflareAgentPreparedCoordinator,
 		private readonly options: CloudflareAgentRuntimeOptions,
-		private readonly observers: ReturnType<typeof createAgentSubmissionObserverRegistry>,
 		private readonly activeAttempts: Set<string>,
 	) {}
 
@@ -274,9 +270,8 @@ class CloudflareAgentCoordinator {
 			request,
 			id: this.instance.name,
 			agentName: this.agentName,
-			conversationStreamStore: this.prepared.conversationStreamStore,
-			admitAttachedSubmission: (payload, onEvent, waitForResult, traceCarrier) =>
-				this.admitAttachedSubmission(payload, onEvent, waitForResult, traceCarrier),
+			admitAttachedSubmission: (payload, traceCarrier) =>
+				this.admitAttachedSubmission(payload, traceCarrier),
 		});
 	}
 
@@ -426,16 +421,7 @@ class CloudflareAgentCoordinator {
 				else if (JSON.stringify(canonical) !== JSON.stringify(settlement.record)) {
 					throw new Error('[flue] Pending settlement does not match its canonical record. Clear incompatible beta persistence.');
 				}
-				if (await this.submissions.finalizeSubmissionSettlement(attempt, settlement.recordId)) {
-					if (settlement.record.outcome === 'completed') this.observers.complete(settlement.submissionId, settlement.record.result);
-					if (settlement.record.outcome === 'failed') {
-						const error = settlement.record.error as { message?: string } | undefined;
-						this.observers.fail(
-							settlement.submissionId,
-							new Error(error?.message ?? 'Agent submission failed.'),
-						);
-					}
-				}
+				await this.submissions.finalizeSubmissionSettlement(attempt, settlement.recordId);
 			}
 			// The marker scan is advisory: a fresh marker suppresses
 			// re-reconciling an attempt that may still be running. If the scan
@@ -541,15 +527,6 @@ class CloudflareAgentCoordinator {
 		);
 		if (reconciled.disposition === 'replacement') {
 			await this.startSubmissionAttempt(reconciled.submission);
-		} else if (submission.kind === 'direct') {
-			// Observer resolution is best-effort and per-process: only a
-			// waiting caller attached in this process can be resolved here.
-			// Detached observers see the durable settlement event.
-			if (reconciled.disposition === 'completed') {
-				this.observers.complete(submission.submissionId, reconciled.result);
-			} else if (reconciled.disposition === 'failed') {
-				this.observers.fail(submission.submissionId, reconciled.error);
-			}
 		}
 	}
 
@@ -698,7 +675,6 @@ class CloudflareAgentCoordinator {
 			},
 			createContext: (dispatchId) =>
 				this.createDurableContext(submissionSyntheticRequest(submission.input), dispatchId),
-			observers: this.observers,
 			conversationWriter,
 			onInteractionStart: this.options.onInteractionStart,
 			signal,
@@ -721,40 +697,25 @@ class CloudflareAgentCoordinator {
 
 	private async admitAttachedSubmission(
 		payload: DirectAgentPayload,
-		onEvent?: (event: AttachedAgentEvent) => Promise<void> | void,
-		waitForResult?: boolean,
 		traceCarrier?: FlueTraceCarrier,
 	) {
-		waitForResult ??= true;
 		const input = createDirectAgentSubmissionInput({
 			agent: this.agentName,
 			id: this.instance.name,
 			payload,
 			traceCarrier,
 		});
-		const attachment = this.observers.attach(input.submissionId, { onEvent });
-		try {
-			const agent = this.options.agents.find((record) => record.name === this.agentName)?.definition;
-			if (!agent) throw new Error('[flue] Agent target unavailable during durable admission.');
-			const admitted = await this.submissions.admitDirect(input);
-			if (admitted.canonicalReadyAt === null) {
-				await this.materializeSubmissionConversation(input, agent);
-				await this.submissions.markSubmissionCanonicalReady(input.submissionId);
-			}
-			const offset = (await this.ensureConversationWriter()).offset;
-			await this.armSubmissionWake();
-			await this.reconcileSubmissions({ driverAlreadyArmed: true });
-			if (!waitForResult) return { submissionId: input.submissionId, offset };
-			return { submissionId: input.submissionId, offset, result: await attachment.completion };
-		} catch (error) {
-			// If admission or reconciliation fails before the claim loop
-			// could pick up this submission, fail the observer so the
-			// caller's completion promise rejects instead of hanging.
-			this.observers.fail(input.submissionId, error);
-			throw error;
-		} finally {
-			attachment.detach();
+		const agent = this.options.agents.find((record) => record.name === this.agentName)?.definition;
+		if (!agent) throw new Error('[flue] Agent target unavailable during durable admission.');
+		const admitted = await this.submissions.admitDirect(input);
+		if (admitted.canonicalReadyAt === null) {
+			await this.materializeSubmissionConversation(input, agent);
+			await this.submissions.markSubmissionCanonicalReady(input.submissionId);
 		}
+		const offset = (await this.ensureConversationWriter()).offset;
+		await this.armSubmissionWake();
+		await this.reconcileSubmissions({ driverAlreadyArmed: true });
+		return { submissionId: input.submissionId, offset };
 	}
 
 	private async admitDispatch(request: Request): Promise<Response> {

@@ -1,41 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-	type AgentPromptOptions,
 	type ConversationStreamChunk,
 	createFlueClient,
 	FlueApiError,
 } from '../src/index.ts';
 
 describe('createFlueClient', () => {
-	describe('agents.prompt()', () => {
-		it('sends agent prompt requests as POST with JSON body', async () => {
-			const seen: Request[] = [];
-			const client = createFlueClient({
-				baseUrl: 'https://flue.test',
-				fetch: async (input, init) => {
-					seen.push(new Request(input, init));
-					return Response.json({ result: { ok: true } });
-				},
-			});
-
-			const options: AgentPromptOptions = {
-				message: 'Hello',
-				images: [{ type: 'image', data: 'YWJj', mimeType: 'image/png' }],
-			};
-
-			await expect(client.agents.prompt('hello', 'inst-1', options)).resolves.toEqual({
-				result: { ok: true },
-			});
-			expect(seen).toHaveLength(1);
-			expect(new URL(seen[0]?.url ?? '').pathname).toBe('/agents/hello/inst-1');
-			expect(seen[0]?.method).toBe('POST');
-			expect(await seen[0]?.json()).toEqual({
-				message: 'Hello',
-				images: [{ type: 'image', data: 'YWJj', mimeType: 'image/png' }],
-			});
-		});
-	});
-
 	describe('default global fetch', () => {
 		it('calls the global fetch with the correct receiver in a browser-like global', async () => {
 			// Regression for "Illegal invocation" in browsers: when no custom fetch
@@ -48,13 +18,15 @@ describe('createFlueClient', () => {
 					throw new TypeError("Failed to execute 'fetch': Illegal invocation");
 				}
 				calledWithCorrectReceiver = true;
-				return Promise.resolve(Response.json({ result: { ok: true } }));
+				return Promise.resolve(
+					Response.json({ streamUrl: 'https://flue.test/stream', offset: '-1', submissionId: 's1' }),
+				);
 			} as typeof fetch;
 			try {
 				const client = createFlueClient({ baseUrl: 'https://flue.test' });
 				await expect(
-					client.agents.prompt('hello', 'inst-1', { message: 'hi' }),
-				).resolves.toEqual({ result: { ok: true } });
+					client.agents.send('hello', 'inst-1', { message: 'hi' }),
+				).resolves.toEqual({ streamUrl: 'https://flue.test/stream', offset: '-1', submissionId: 's1' });
 				expect(calledWithCorrectReceiver).toBe(true);
 			} finally {
 				globalThis.fetch = original;
@@ -504,8 +476,8 @@ describe('createFlueClient', () => {
 					return dsJsonResponse(
 						[
 							{ type: 'message-delta', conversationId: 'c1', messageId: 'a1', kind: 'text', delta: 'hello', position: { batch: 1, index: 0 } },
-							{ type: 'submission-settled', conversationId: 'c1', submissionId: 'other', outcome: 'completed', result: { text: 'ignore' }, position: { batch: 2, index: 0 } },
-							{ type: 'submission-settled', conversationId: 'c1', submissionId: 'submission-1', outcome: 'completed', result: { text: 'done' }, position: { batch: 3, index: 0 } },
+							{ type: 'submission-settled', conversationId: 'c1', submissionId: 'other', outcome: 'completed', position: { batch: 2, index: 0 } },
+							{ type: 'submission-settled', conversationId: 'c1', submissionId: 'submission-1', outcome: 'completed', position: { batch: 3, index: 0 } },
 						] satisfies ConversationStreamChunk[],
 						{ closed: true },
 					);
@@ -513,7 +485,7 @@ describe('createFlueClient', () => {
 			});
 
 			await expect(
-				client.agents.wait<{ text: string }>(
+				client.agents.wait(
 					{
 						streamUrl: 'https://flue.test/agents/hello/instance-1',
 						offset: 'admission-offset',
@@ -521,7 +493,7 @@ describe('createFlueClient', () => {
 					},
 					{ onEvent: (event) => seenEvents.push(event.type) },
 				),
-			).resolves.toEqual({ text: 'done' });
+			).resolves.toBeUndefined();
 			expect(offsets).toEqual(['admission-offset']);
 			expect(seenEvents).toEqual(['message-delta', 'submission-settled', 'submission-settled']);
 		});
@@ -663,12 +635,13 @@ describe('createFlueClient', () => {
 				fetch: async (input, init) => {
 					const request = new Request(input, init);
 					requests.push(request);
-					if (request.method === 'POST') return Response.json({ result: { ok: true } });
+					if (request.method === 'POST')
+						return Response.json({ streamUrl: 'https://flue.test/stream', offset: '-1', submissionId: 's1' });
 					return Response.json({ runId: 'run-1' });
 				},
 			});
 
-			await client.agents.prompt('hello', 'inst-1', { message: 'Hello' });
+			await client.agents.send('hello', 'inst-1', { message: 'Hello' });
 			await client.runs.get('run-1');
 
 			expect(requests.map(({ url }) => new URL(url).pathname)).toEqual([
@@ -719,7 +692,7 @@ describe('createFlueClient', () => {
 			});
 
 			const error = await client.agents
-				.prompt('hello', 'inst-1', { message: 'Hello' })
+				.send('hello', 'inst-1', { message: 'Hello' })
 				.catch((error: unknown) => error);
 
 			expect(error).toBeInstanceOf(FlueApiError);

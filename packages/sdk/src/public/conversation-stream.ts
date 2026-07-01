@@ -74,7 +74,6 @@ export type ConversationStreamChunk =
 			conversationId: string;
 			submissionId: string;
 			outcome: 'completed' | 'failed' | 'aborted';
-			result?: unknown;
 			error?: unknown;
 			position: ConversationChunkPosition;
 	  };
@@ -353,7 +352,6 @@ function applySettlement(
 	const settlement: FlueConversationSettlement = {
 		submissionId: chunk.submissionId,
 		outcome: chunk.outcome,
-		...(chunk.result === undefined ? {} : { result: chunk.result }),
 		...(chunk.error === undefined ? {} : { error: chunk.error }),
 	};
 	const settlements = state.settlements;

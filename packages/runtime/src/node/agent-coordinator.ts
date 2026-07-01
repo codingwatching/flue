@@ -8,7 +8,6 @@ import { ConversationRecordWriter } from '../conversation-writer.ts';
 import {
 	type AgentSubmissionInput,
 	type AttachedAgentSubmissionAdmission,
-	createAgentSubmissionObserverRegistry,
 	createDirectAgentSubmissionInput,
 	createDispatchAgentSubmissionInput,
 	materializeAgentSubmissionSession,
@@ -28,7 +27,6 @@ import type { CreateAgentContextFn } from '../runtime/handle-agent.ts';
 import type { RuntimeActivityGate, RuntimeActivityLease } from '../runtime/runtime-activity-gate.ts';
 import type {
 	AgentDefinition,
-	AttachedAgentEvent,
 	DirectAgentPayload,
 	DispatchReceipt,
 } from '../types.ts';
@@ -114,7 +112,6 @@ export function createNodeAgentCoordinator(options: {
 	activityGate?: RuntimeActivityGate;
 }): NodeAgentCoordinator {
 	const { submissions, agents, createContext, conversationStreamStore, attachmentStore, onInteractionStart, activityGate } = options;
-	const observers = createAgentSubmissionObserverRegistry();
 	const conversationWriters = new Map<string, Promise<ConversationRecordWriter>>();
 	const conversationMaterializations = new Map<string, Promise<void>>();
 
@@ -266,7 +263,6 @@ export function createNodeAgentCoordinator(options: {
 				submission: claimed,
 				resolveAgent,
 				createContext: makeSubmissionContext(claimed.input, conversationWriter),
-				observers,
 				conversationWriter,
 				onInteractionStart,
 				signal: controller.signal,
@@ -506,13 +502,7 @@ export function createNodeAgentCoordinator(options: {
 			else if (JSON.stringify(canonical) !== JSON.stringify(settlement.record)) {
 				throw new Error('[flue] Pending settlement does not match its canonical record. Clear incompatible beta persistence.');
 			}
-			if (await submissions.finalizeSubmissionSettlement(attempt, settlement.recordId)) {
-				if (settlement.record.outcome === 'completed') observers.complete(settlement.submissionId, settlement.record.result);
-				if (settlement.record.outcome === 'failed') {
-					const error = settlement.record.error as { message?: string } | undefined;
-					observers.fail(settlement.submissionId, new Error(error?.message ?? 'Agent submission failed.'));
-				}
-			}
+			await submissions.finalizeSubmissionSettlement(attempt, settlement.recordId);
 		}
 		for (const submission of await submissions.listExpiredSubmissions()) {
 			// Skip submissions still actively processing in this coordinator
@@ -543,15 +533,6 @@ export function createNodeAgentCoordinator(options: {
 				);
 				if (reconciled.disposition === 'replacement') {
 					spawnSubmissionTask(reconciled.submission);
-				} else if (submission.kind === 'direct') {
-					// Observer resolution is best-effort and per-process: only
-					// a waiting caller attached in this process can be resolved
-					// here. Detached observers see the durable settlement event.
-					if (reconciled.disposition === 'completed') {
-						observers.complete(submission.submissionId, reconciled.result);
-					} else if (reconciled.disposition === 'failed') {
-						observers.fail(submission.submissionId, reconciled.error);
-					}
 				}
 			} catch (error) {
 				console.error(
@@ -648,11 +629,8 @@ export function createNodeAgentCoordinator(options: {
 		createAdmission(agentName: string, instanceId: string): AttachedAgentSubmissionAdmission {
 			return async (
 				payload: DirectAgentPayload,
-				onEvent?: (event: AttachedAgentEvent) => Promise<void> | void,
-				waitForResult?: boolean,
 				traceCarrier?: import('../execution-interceptor.ts').FlueTraceCarrier,
 			) => {
-				waitForResult ??= true;
 				if (stopping) throw new Error('[flue] Coordinator is shutting down.');
 				const activityLease = activityGate?.enter();
 				const agent = agents.find((record) => record.name === agentName)?.definition;
@@ -668,7 +646,6 @@ export function createNodeAgentCoordinator(options: {
 					traceCarrier,
 				});
 
-				const attachment = observers.attach(input.submissionId, { onEvent });
 				try {
 					const admitted = await submissions.admitDirect(input);
 					if (admitted.canonicalReadyAt === null) {
@@ -681,14 +658,10 @@ export function createNodeAgentCoordinator(options: {
 					if (activityLease) activityLeases.set(input.submissionId, activityLease);
 					ensureClaimLoop();
 					wake();
-					if (!waitForResult) return { submissionId: input.submissionId, offset };
-					return { submissionId: input.submissionId, offset, result: await attachment.completion };
+					return { submissionId: input.submissionId, offset };
 				} catch (error) {
 					activityLease?.release();
-					observers.fail(input.submissionId, error);
 					throw error;
-				} finally {
-					attachment.detach();
 				}
 			};
 		},

@@ -234,6 +234,8 @@ function optimisticMessage(
 	return {
 		id: event.localId,
 		role: 'user',
+		purpose: 'user',
+		display: 'visible',
 		// Client-authored creation time so the just-sent row shows a timestamp
 		// instantly. On the optimistic→confirmed swap, converge() replaces this
 		// echo with the canonical message carrying the server-authored time.

@@ -214,9 +214,8 @@ describe('flue()', () => {
 		configureFlueRuntime(nodeRuntime({
 			target: 'node',
 			agents: [agentRecord('assistant', { route: async (_c, next) => next() })],
-			createAgentAdmission: (_agentName, id) => async (payload) => ({
+			createAgentAdmission: (_agentName, _id) => async (_payload) => ({
 					submissionId: 'submission-1',
-					result: { instanceId: id, payload },
 				}),
 			createWorkflowContext: createTestContext,
 			eventStreamStore: createTestEventStreamStore(),
@@ -246,17 +245,21 @@ describe('flue()', () => {
 	});
 
 	it('accepts direct agent images and delivers them unchanged', async () => {
+		let delivered: unknown;
 		configureFlueRuntime(nodeRuntime({
 			target: 'node',
 			agents: [agentRecord('assistant', { route: async (_c, next) => next() })],
-			createAgentAdmission: (_agentName, ) => async (payload) => ({ submissionId: 'submission-1', result: payload }),
+			createAgentAdmission: (_agentName, ) => async (payload) => {
+				delivered = payload;
+				return { submissionId: 'submission-1' };
+			},
 			createWorkflowContext: createTestContext,
 			eventStreamStore: createTestEventStreamStore(),
 		}));
 		const app = new Hono();
 		app.route('/api', flue());
 		const response = await app.fetch(
-			new Request('http://localhost/api/agents/assistant/customer-123?wait=result', {
+			new Request('http://localhost/api/agents/assistant/customer-123', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
@@ -266,23 +269,20 @@ describe('flue()', () => {
 				}),
 			}),
 		);
-		expect(response.status).toBe(200);
-		expect((await response.json()) as unknown).toMatchObject({
-			result: {
-				message: 'hello',
-				images: [{ type: 'image', data: 'YWJj', mimeType: 'image/png' }],
-			},
+		expect(response.status).toBe(202);
+		expect(delivered).toMatchObject({
+			message: 'hello',
+			images: [{ type: 'image', data: 'YWJj', mimeType: 'image/png' }],
 		});
 	});
 
-	it('returns the synchronous result envelope when an agent POST requests wait=result', async () => {
+	it('rejects any wait query param with invalid_request when an agent POST is sent', async () => {
 		configureFlueRuntime(nodeRuntime({
 			target: 'node',
 			agents: [agentRecord('assistant', { route: async (_c, next) => next() })],
-			createAgentAdmission: (_agentName, id) => async (payload) => ({
-					submissionId: 'submission-1',
-					result: { instanceId: id, payload },
-				}),
+			createAgentAdmission: (_agentName, _id) => async (_payload) => ({
+				submissionId: 'submission-1',
+			}),
 			createWorkflowContext: createTestContext,
 			eventStreamStore: createTestEventStreamStore(),
 		}));
@@ -297,16 +297,19 @@ describe('flue()', () => {
 			}),
 		);
 
-		expect(response.status).toBe(200);
+		expect(response.status).toBe(400);
 		expect(await response.json()).toEqual({
-			result: { instanceId: 'customer-123', payload: { message: 'hello' } },
-			streamUrl: 'http://localhost/api/agents/assistant/customer-123',
-			offset: '-1',
-			submissionId: 'submission-1',
+			error: {
+				type: 'invalid_request',
+				message: 'Request is malformed.',
+				details:
+					'Agent prompts are fire-and-forget and do not support `?wait=result`. ' +
+					"Await completion with the SDK client's `agents.wait()`, or read the conversation stream (GET this URL).",
+			},
 		});
 	});
 
-	it('renders the typed error envelope when a session FlueError fails a synchronous agent POST', async () => {
+	it('renders the typed error envelope when a FlueError fails an agent admission', async () => {
 		const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 		configureFlueRuntime(nodeRuntime({
 			target: 'node',
@@ -322,7 +325,7 @@ describe('flue()', () => {
 
 		try {
 			const response = await app.fetch(
-				new Request('http://localhost/api/agents/assistant/customer-123?wait=result', {
+				new Request('http://localhost/api/agents/assistant/customer-123', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
 					body: JSON.stringify({ message: 'hello' }),
@@ -340,34 +343,6 @@ describe('flue()', () => {
 		} finally {
 			consoleError.mockRestore();
 		}
-	});
-
-	it('rejects an unknown wait value with invalid_request when an agent POST mistypes the query', async () => {
-		configureFlueRuntime(nodeRuntime({
-			target: 'node',
-			agents: [agentRecord('assistant', { route: async (_c, next) => next() })],
-			createAgentAdmission: (_agentName, id) => async (payload) => ({
-					submissionId: 'submission-1',
-					result: { instanceId: id, payload },
-				}),
-			createWorkflowContext: createTestContext,
-			eventStreamStore: createTestEventStreamStore(),
-		}));
-		const app = new Hono();
-		app.route('/api', flue());
-
-		const response = await app.fetch(
-			new Request('http://localhost/api/agents/assistant/customer-123?wait=results', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ message: 'hello' }),
-			}),
-		);
-
-		expect(response.status).toBe(400);
-		expect(((await response.json()) as { error: { type: string } }).error.type).toBe(
-			'invalid_request',
-		);
 	});
 
 	it('rejects an unknown wait value with invalid_request when a workflow POST mistypes the query', async () => {
@@ -544,9 +519,8 @@ describe('flue()', () => {
 					},
 				}),
 			],
-			createAgentAdmission: (_agentName, _id) => async (payload) => ({
+			createAgentAdmission: (_agentName, _id) => async (_payload) => ({
 				submissionId: 'submission-1',
-				result: { payload },
 			}),
 			createWorkflowContext: createTestContext,
 			eventStreamStore: createTestEventStreamStore(),
@@ -854,9 +828,8 @@ describe('flue()', () => {
 		configureFlueRuntime(nodeRuntime({
 			target: 'node',
 			agents: [agentRecord('assistant', { route: async (_c, next) => next() })],
-			createAgentAdmission: (_agentName, _id) => async (payload) => ({
+			createAgentAdmission: (_agentName, _id) => async (_payload) => ({
 					submissionId: 'submission-1',
-					result: { message: payload.message },
 				}),
 			createWorkflowContext: createTestContext,
 			eventStreamStore: createTestEventStreamStore(),
@@ -887,9 +860,8 @@ describe('flue()', () => {
 		configureFlueRuntime(nodeRuntime({
 			target: 'node',
 			agents: [agentRecord('assistant', { route: async (_c, next) => next() })],
-			createAgentAdmission: (_agentName, _id) => async (payload) => ({
+			createAgentAdmission: (_agentName, _id) => async (_payload) => ({
 					submissionId: 'submission-1',
-					result: { message: payload.message },
 				}),
 			createWorkflowContext: createTestContext,
 			eventStreamStore: createTestEventStreamStore(),
@@ -953,9 +925,8 @@ describe('flue()', () => {
 		configureFlueRuntime(nodeRuntime({
 			target: 'node',
 			agents: [agentRecord('assistant', { route: async (_c, next) => next() })],
-			createAgentAdmission: (_agentName, _id) => async (payload) => ({
+			createAgentAdmission: (_agentName, _id) => async (_payload) => ({
 					submissionId: 'submission-1',
-					result: { message: payload.message },
 				}),
 			createWorkflowContext: createTestContext,
 			eventStreamStore: createTestEventStreamStore(),
@@ -986,7 +957,7 @@ describe('flue()', () => {
 		configureFlueRuntime(nodeRuntime({
 			target: 'node',
 			agents: [agentRecord('assistant', { route: async (_c, next) => next() })],
-			createAgentAdmission: (_agentName, ) => async (payload) => ({ submissionId: 'submission-1', result: payload }),
+			createAgentAdmission: (_agentName, ) => async (_payload) => ({ submissionId: 'submission-1' }),
 			createWorkflowContext: createTestContext,
 			eventStreamStore: createTestEventStreamStore(),
 		}));
@@ -1036,9 +1007,8 @@ describe('flue()', () => {
 					}),
 				),
 			],
-			createAgentAdmission: (_agentName, id) => async () => ({
+			createAgentAdmission: (_agentName, _id) => async () => ({
 				submissionId: 'submission-1',
-				result: { id },
 			}),
 			createWorkflowContext: createTestContext,
 		}));
@@ -1101,9 +1071,8 @@ describe('createDefaultFlueApp()', () => {
 		configureFlueRuntime(nodeRuntime({
 			target: 'node',
 			agents: [agentRecord('assistant', { route: async (_c, next) => next() })],
-			createAgentAdmission: (_agentName, id) => async (payload) => ({
+			createAgentAdmission: (_agentName, _id) => async (_payload) => ({
 					submissionId: 'submission-1',
-					result: { instanceId: id, payload },
 				}),
 			createWorkflowContext: createTestContext,
 			eventStreamStore: createTestEventStreamStore(),

@@ -9,6 +9,15 @@ export interface FlueAgentHarnessOptions {
 	headers?: Record<string, string>;
 }
 
+function lastAssistantText(messages: FlueConversationMessage[]): string {
+	const message = messages.findLast((entry) => entry.role === 'assistant');
+	if (!message) return '';
+	return message.parts
+		.filter((part) => part.type === 'text')
+		.map((part) => part.text)
+		.join('');
+}
+
 function collectToolCalls(messages: FlueConversationMessage[]): SimpleToolCallRecord[] {
 	return messages.flatMap((message) =>
 		message.parts.flatMap((part) => {
@@ -40,24 +49,16 @@ export function createFlueAgentHarness(options: FlueAgentHarnessOptions) {
 		name: `flue-${options.agentName}-agent`,
 		run: async ({ input, signal }) => {
 			const instanceId = `eval-${crypto.randomUUID()}`;
-			const invocation = await client.agents.prompt(options.agentName, instanceId, {
+			const admission = await client.agents.send(options.agentName, instanceId, {
 				message: input,
 				signal,
 			});
+			await client.agents.wait(admission, { signal });
 			const history = await client.agents.history(options.agentName, instanceId, { signal });
-			const toolCalls = collectToolCalls(history.messages);
 
 			return {
-				output: invocation.result.text,
-				toolCalls,
-				usage: {
-					provider: invocation.result.model.provider,
-					model: invocation.result.model.id,
-					inputTokens: invocation.result.usage.input,
-					outputTokens: invocation.result.usage.output,
-					totalTokens: invocation.result.usage.totalTokens,
-					cost: invocation.result.usage.cost.total,
-				},
+				output: lastAssistantText(history.messages),
+				toolCalls: collectToolCalls(history.messages),
 			};
 		},
 	});

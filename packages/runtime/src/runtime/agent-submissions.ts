@@ -21,7 +21,6 @@ import type {
 	AttachedAgentEvent,
 	CallHandle,
 	DirectAgentPayload,
-	PromptResponse,
 } from '../types.ts';
 import { type AttachmentStore, createAttachmentRef } from './attachment-store.ts';
 import type { DispatchInput } from './dispatch-queue.ts';
@@ -81,7 +80,6 @@ export interface ProcessAgentSubmissionOptions {
 export interface AgentSubmissionSession {
 	readonly conversationId: string;
 	inspectSubmissionInput(input: AgentSubmissionInput): Promise<AgentSubmissionInspection> | AgentSubmissionInspection;
-	reconstructSubmissionResult(input: AgentSubmissionInput): Promise<PromptResponse | undefined> | PromptResponse | undefined;
 	processSubmissionInput(
 		input: AgentSubmissionInput,
 		options?: ProcessAgentSubmissionOptions,
@@ -93,32 +91,13 @@ export interface AgentSubmissionSession {
 	recordSubmissionTerminal(input: AgentSubmissionInterruption): Promise<void>;
 }
 
-interface AgentSubmissionObserver {
-	onEvent?: (event: AttachedAgentEvent) => Promise<void> | void;
-}
-
-interface AgentSubmissionAttachment {
-	readonly completion: Promise<unknown>;
-	detach(): void;
-}
-
-interface AgentSubmissionObserverRegistry {
-	attach(submissionId: string, observer: AgentSubmissionObserver): AgentSubmissionAttachment;
-	publish(submissionId: string, event: AttachedAgentEvent): Promise<void>;
-	complete(submissionId: string, result: unknown): void;
-	fail(submissionId: string, error: unknown): void;
-}
-
 interface AttachedAgentSubmissionReceipt {
 	readonly submissionId: string;
 	readonly offset?: string;
-	readonly result?: unknown;
 }
 
 export type AttachedAgentSubmissionAdmission = (
 	payload: DirectAgentPayload,
-	onEvent?: (event: AttachedAgentEvent) => Promise<void> | void,
-	waitForResult?: boolean,
 	traceCarrier?: FlueTraceCarrier,
 ) => Promise<AttachedAgentSubmissionReceipt>;
 
@@ -193,61 +172,13 @@ export function agentSubmissionDispatchInput(input: DispatchAgentSubmissionInput
 	return dispatch;
 }
 
-export function createAgentSubmissionObserverRegistry(): AgentSubmissionObserverRegistry {
-	const observers = new Map<
-		string,
-		AgentSubmissionObserver & { resolve(value: unknown): void; reject(error: unknown): void }
-	>();
-	return {
-		attach(submissionId, observer) {
-			if (observers.has(submissionId)) {
-				throw new Error('[flue] Internal agent submission observer is already attached.');
-			}
-			let resolve!: (value: unknown) => void;
-			let reject!: (error: unknown) => void;
-			const completion = new Promise<unknown>((resolve_, reject_) => {
-				resolve = resolve_;
-				reject = reject_;
-			});
-			// Callers may never await completion (fire-and-forget admission, or
-			// a failure before the await attaches) — keep a rejection from
-			// surfacing as an unhandled-rejection crash.
-			completion.catch(() => {});
-			const attached = { ...observer, resolve, reject };
-			observers.set(submissionId, attached);
-			return {
-				completion,
-				detach() {
-					if (observers.get(submissionId) === attached) observers.delete(submissionId);
-				},
-			};
-		},
-		async publish(submissionId, event) {
-			try {
-				await observers.get(submissionId)?.onEvent?.(event);
-			} catch (error) {
-				console.warn('[flue:submission-observer] onEvent callback failed:', error);
-			}
-		},
-		complete(submissionId, result) {
-			observers.get(submissionId)?.resolve(result);
-			observers.delete(submissionId);
-		},
-		fail(submissionId, error) {
-			observers.get(submissionId)?.reject(error);
-			observers.delete(submissionId);
-		},
-	};
-}
-
 /**
  * Reconciliation disposition for an interrupted submission. Coordinators
- * use it for observer notification and replacement-attempt scheduling:
+ * use it for replacement-attempt scheduling:
  *
  * - `replacement` — a new attempt was claimed; start processing it.
  * - `completed` — the canonical response had already completed; the
- *   submission settled as success and `result` carries the reconstructed
- *   response (or undefined when the session could not reproduce one).
+ *   submission settled as success.
  * - `requeued` — provably-unstarted work went back to the queue.
  * - `failed` — the submission was terminalized with `error`.
  * - `stale` — another attempt owns or already settled the submission;
@@ -255,7 +186,7 @@ export function createAgentSubmissionObserverRegistry(): AgentSubmissionObserver
  */
 type ReconciliationResult =
 	| { readonly disposition: 'replacement'; readonly submission: AgentSubmission }
-	| { readonly disposition: 'completed'; readonly result: unknown }
+	| { readonly disposition: 'completed' }
 	| { readonly disposition: 'requeued' }
 	| { readonly disposition: 'failed'; readonly error: Error }
 	| { readonly disposition: 'stale' };
@@ -288,14 +219,9 @@ export async function reconcileInterruptedSubmission(
 	const dispatchId = agentSubmissionDispatchId(input);
 	const ctx = createContext(dispatchId);
 	if (submission.kind === 'direct') ctx.setSubmissionId?.(submission.submissionId);
-	const inspected = (await createAgentSubmissionSessionHandler(agent, input, async (s) => {
-		const state = await s.inspectSubmissionInput(input);
-		return {
-			state,
-			result: state === 'completed' ? await s.reconstructSubmissionResult(input) : undefined,
-		};
-	})(ctx)) as { state: AgentSubmissionInspection; result: unknown };
-	const state = inspected.state;
+	const state = await createAgentSubmissionSessionHandler(agent, input, (s) =>
+		s.inspectSubmissionInput(input),
+	)(ctx) as AgentSubmissionInspection;
 	if (state === 'completed') {
 		if (submission.kind === 'direct') {
 			await settleDirectSubmission(
@@ -303,14 +229,13 @@ export async function reconcileInterruptedSubmission(
 				attempt,
 				ctx,
 				'completed',
-				inspected.result,
 				undefined,
 				conversationWriter,
 			);
 		} else {
 			await submissions.completeSubmission(attempt);
 		}
-		return { disposition: 'completed', result: inspected.result };
+		return { disposition: 'completed' };
 	}
 
 	// Abort requested before the owner could settle (it crashed, or the abort
@@ -478,27 +403,6 @@ export async function reconcileInterruptedSubmission(
 	);
 }
 
-/**
- * Create the event callback that forwards submission events to attached
- * observers. Filters `run_start`/`run_end`, strips `runId`, and sets
- * `instanceId`. Used by both Node and Cloudflare coordinators for direct
- * submissions.
- */
-function createSubmissionEventCallback(
-	submissionId: string,
-	instanceId: string,
-	publish: (submissionId: string, event: AttachedAgentEvent) => Promise<void>,
-): (event: Record<string, unknown>) => Promise<void> | void {
-	return (event) => {
-		if (event.type === 'run_start' || event.type === 'run_end') return;
-		const attachedEvent = { ...event, instanceId, submissionId } as AttachedAgentEvent & {
-			runId?: string;
-		};
-		delete attachedEvent.runId;
-		return publish(submissionId, attachedEvent);
-	};
-}
-
 /** Synthetic request for the submission's kind: an agent route for direct prompts, the dispatch path for dispatches. */
 export function submissionSyntheticRequest(input: AgentSubmissionInput): Request {
 	if (input.kind === 'direct') {
@@ -521,8 +425,6 @@ export interface ProcessSubmissionOptions {
 	resolveAgent: (name: string) => AgentDefinition;
 	/** Build a context for this submission. */
 	createContext: (dispatchId: string | undefined) => FlueContextInternal;
-	/** Observer registry for direct submission events and settlement. */
-	observers: Pick<AgentSubmissionObserverRegistry, 'publish' | 'complete' | 'fail'>;
 	conversationWriter?: ConversationRecordWriter;
 	onInteractionStart?: (interaction: {
 		agentName: string;
@@ -539,8 +441,8 @@ export interface ProcessSubmissionOptions {
 	signal?: AbortSignal;
 	/**
 	 * Called when the signal is an AbortError and should be treated as a
-	 * shutdown — the submission is not settled (stays in 'running'), only the
-	 * observer is notified. Return `true` to suppress normal settlement.
+	 * shutdown — the submission is not settled (stays in 'running'). Return
+	 * `true` to suppress normal settlement.
 	 */
 	isShutdownAbort?: (error: unknown) => boolean;
 	/**
@@ -552,12 +454,11 @@ export interface ProcessSubmissionOptions {
 
 /**
  * Shared submission processing logic used by both Node and Cloudflare
- * coordinators. Validates the submission, creates a context, wires event
- * forwarding for direct submissions, runs the agent handler, and settles
- * the submission on success or failure.
+ * coordinators. Validates the submission, creates a context, runs the agent
+ * handler, and settles the submission on success or failure.
  */
 export async function processSubmission(opts: ProcessSubmissionOptions): Promise<void> {
-	const { submissions, submission, observers } = opts;
+	const { submissions, submission } = opts;
 	const { input } = submission;
 	if (!submission.attemptId) return;
 	if (input.kind === 'dispatch') assertAgentDispatchAdmissionInput(input);
@@ -586,11 +487,6 @@ export async function processSubmission(opts: ProcessSubmissionOptions): Promise
 
 	if (submission.kind === 'direct') {
 		ctx.setSubmissionId?.(submission.submissionId);
-		ctx.setEventCallback(
-			createSubmissionEventCallback(submission.submissionId, input.id, (sid, event) =>
-				observers.publish(sid, event),
-			),
-		);
 	}
 
 	const execute = () =>
@@ -642,7 +538,7 @@ export async function processSubmission(opts: ProcessSubmissionOptions): Promise
 		// attempt-based; settle it as aborted before running any model work. This
 		// also covers an abort that landed between claim and processing.
 		if (persisted.abortRequestedAt !== undefined) {
-			const settled = await settleAbortedWithContext(
+			await settleAbortedWithContext(
 				submissions,
 				submission,
 				attempt,
@@ -650,12 +546,8 @@ export async function processSubmission(opts: ProcessSubmissionOptions): Promise
 				ctx,
 				opts.conversationWriter,
 			);
-			if (submission.kind === 'direct' && settled) {
-				observers.fail(submission.submissionId, new SubmissionAbortedError());
-			}
 			return;
 		}
-		let result: unknown;
 		try {
 			const run = () =>
 				interceptExecution(
@@ -673,10 +565,9 @@ export async function processSubmission(opts: ProcessSubmissionOptions): Promise
 					},
 					execute,
 				);
-			result = await run();
+			await run();
 		} catch (error) {
 			if (opts.isShutdownAbort?.(error)) {
-				if (submission.kind === 'direct') observers.fail(submission.submissionId, error);
 				throw error;
 			}
 			// Abort: keyed on the coordinator signal's reason (robust even when the
@@ -686,7 +577,7 @@ export async function processSubmission(opts: ProcessSubmissionOptions): Promise
 			// submission stays running and recovery settles it aborted via the
 			// durable abort flag.
 			if (opts.signal?.reason instanceof SubmissionAbortedError) {
-				const settled = await settleAbortedWithContext(
+				await settleAbortedWithContext(
 					submissions,
 					submission,
 					attempt,
@@ -694,41 +585,35 @@ export async function processSubmission(opts: ProcessSubmissionOptions): Promise
 					ctx,
 					opts.conversationWriter,
 				);
-				if (submission.kind === 'direct' && settled) {
-					observers.fail(submission.submissionId, new SubmissionAbortedError());
-				}
 				return;
 			}
-			const settled =
-				submission.kind === 'direct'
-					? await settleDirectSubmission(
-							submissions,
-							attempt,
-							ctx,
-							'failed',
-							undefined,
-							error,
-							opts.conversationWriter,
-						)
-					: await submissions.failSubmission(attempt, error);
-			if (submission.kind === 'direct' && settled) observers.fail(submission.submissionId, error);
+			if (submission.kind === 'direct') {
+				await settleDirectSubmission(
+					submissions,
+					attempt,
+					ctx,
+					'failed',
+					error,
+					opts.conversationWriter,
+				);
+			} else {
+				await submissions.failSubmission(attempt, error);
+			}
 			throw error;
 		}
-		const settled =
-			submission.kind === 'direct'
-				? await settleDirectSubmission(
-						submissions,
-						attempt,
-						ctx,
-						'completed',
-						result,
-						undefined,
-						opts.conversationWriter,
-					)
-				: await submissions.completeSubmission(attempt);
-		if (submission.kind === 'direct' && settled) observers.complete(submission.submissionId, result);
+		if (submission.kind === 'direct') {
+			await settleDirectSubmission(
+				submissions,
+				attempt,
+				ctx,
+				'completed',
+				undefined,
+				opts.conversationWriter,
+			);
+		} else {
+			await submissions.completeSubmission(attempt);
+		}
 	} finally {
-		if (submission.kind === 'direct') ctx.setEventCallback(undefined);
 		opts.onSettled?.();
 	}
 }
@@ -778,7 +663,6 @@ async function failInterruptedSubmission(
 					attempt,
 					ctx,
 					'failed',
-					undefined,
 					error,
 					conversationWriter,
 				)
@@ -834,7 +718,6 @@ async function settleAbortedWithContext(
 			attempt,
 			ctx,
 			'aborted',
-			undefined,
 			error,
 			conversationWriter,
 		);
@@ -847,7 +730,6 @@ async function settleDirectSubmission(
 	attempt: SubmissionAttemptRef,
 	ctx: FlueContextInternal,
 	outcome: 'completed' | 'failed' | 'aborted',
-	result?: unknown,
 	error?: unknown,
 	conversationWriter?: ConversationRecordWriter,
 ): Promise<boolean> {
@@ -855,7 +737,7 @@ async function settleDirectSubmission(
 		type: 'submission_settled',
 		submissionId: attempt.submissionId,
 		outcome,
-		...(outcome === 'completed' ? { result } : { error: serializeSubmissionError(error) }),
+		...(outcome === 'completed' ? {} : { error: serializeSubmissionError(error) }),
 	});
 	if (!conversationWriter) return false;
 	const eventKey = `record_direct-submission:${attempt.submissionId}:settled`;
@@ -883,7 +765,7 @@ async function settleDirectSubmission(
 			submissionId: attempt.submissionId,
 			attemptId: attempt.attemptId,
 			outcome,
-			...(outcome === 'completed' ? { result } : { error: serializeSubmissionError(error) }),
+			...(outcome === 'completed' ? {} : { error: serializeSubmissionError(error) }),
 		};
 	const obligation =
 		pending ??
